@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Test and coverage artefacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Environment — never commit a filled one
+deploy.env
+.env
+*.env
+!deploy/.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

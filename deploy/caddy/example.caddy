@@ -1,0 +1,94 @@
+# Caddy example — the two site blocks a deployment needs.
+#
+# The first serves the proxy itself. The second shows what a PROTECTED
+# RESOURCE has to publish so a client can find the proxy from the resource
+# alone. Adapt the hostnames; nothing here is specific to one deployment.
+
+# ---------------------------------------------------------------------------
+# 1. The proxy's own site
+# ---------------------------------------------------------------------------
+
+auth.example.com {
+    encode zstd gzip
+
+    handle /healthz {
+        reverse_proxy cimd-proxy:8080
+    }
+
+    # /authorize, /callback, /token, /register, /.well-known/*
+    handle {
+        reverse_proxy cimd-proxy:8080 {
+            header_up Host              {host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For   {remote}
+        }
+    }
+
+    log {
+        output stdout
+        format json
+        level  INFO
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 2. A protected resource that does not publish its own metadata
+# ---------------------------------------------------------------------------
+#
+# RFC 9728 metadata can be served out of the reverse proxy, which means a
+# resource server needs no change to take part. Four details decide whether a
+# strict client gets through, and each of them has been observed to be the one
+# that breaks a connection:
+#
+#   a) `resource` MUST equal the identifier the client actually addresses,
+#      path included. A server at https://mcp.example.com/mcp publishes
+#      exactly that, not the bare origin. A client validates this and a
+#      mismatch is a hard stop.
+#
+#   b) The metadata has to be reachable at BOTH well-known locations: the
+#      path-inserted form (/.well-known/oauth-protected-resource/mcp for a
+#      resource at /mcp) and the root form. Clients differ in which they try
+#      first, and one that tries the path-inserted form and gets 404 may never
+#      fall back.
+#
+#   c) `scopes_supported` is OMITTED when nothing is to be declared. An empty
+#      array announces that no scope is supported at all, which is a different
+#      statement and a plausible reason for a client to give up.
+#
+#   d) The 401 carries a `WWW-Authenticate` challenge naming the metadata
+#      location. Without it the client has to guess, which is how (b) turns
+#      into a failed connection instead of a retry.
+
+mcp.example.com {
+    # (b) path-inserted form — for the resource served at /mcp
+    handle /.well-known/oauth-protected-resource/mcp {
+        header Content-Type "application/json; charset=utf-8"
+        respond `{
+  "resource": "https://mcp.example.com/mcp",
+  "authorization_servers": ["https://auth.example.com"],
+  "bearer_methods_supported": ["header"]
+}` 200
+    }
+
+    # (b) root form — same document, so both discovery orders succeed
+    handle /.well-known/oauth-protected-resource {
+        header Content-Type "application/json; charset=utf-8"
+        respond `{
+  "resource": "https://mcp.example.com/mcp",
+  "authorization_servers": ["https://auth.example.com"],
+  "bearer_methods_supported": ["header"]
+}` 200
+    }
+
+    handle {
+        # (d) point an unauthenticated caller at the metadata instead of
+        # leaving it to guess. Applied only to the 401 the resource itself
+        # emits; a challenge the upstream already set is left alone.
+        header @unauthorized {
+            WWW-Authenticate `Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"`
+        }
+        @unauthorized status 401
+
+        reverse_proxy mcp-server:8080
+    }
+}

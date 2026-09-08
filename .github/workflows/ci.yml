@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Sonar needs full history to blame accurately.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install project (test + dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test,dev]"
+
+      - name: Ruff — lint
+        run: python -m ruff check src tests
+
+      - name: Ruff — format check
+        run: python -m ruff format --check src tests
+
+      - name: Pytest with coverage
+        run: |
+          python -m pytest \
+            --cov=src/cimd_proxy \
+            --cov-report=term \
+            --cov-report=xml:coverage.xml
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: warn
+
+      # SonarCloud runs only when the SONAR_TOKEN secret is set. Until it is
+      # provisioned this step is skipped WITH a written reason AND the
+      # condition under which it runs again: a skipped guard that says nothing
+      # is indistinguishable from a guard that was never there. `if:` cannot
+      # read a secret directly, so the condition is evaluated in a preceding
+      # shell step and this one gates on its output.
+      - name: Check Sonar prerequisites
+        id: sonar_check
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "${SONAR_TOKEN:-}" ]; then
+            echo "should_run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "SonarCloud step skipped: the SONAR_TOKEN secret is not configured."
+            echo "Re-arms automatically once the secret is added; no code change needed."
+            echo "should_run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: SonarCloud scan
+        if: steps.sonar_check.outputs.should_run == 'true'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: SonarSource/sonarcloud-github-action@v3.1.0

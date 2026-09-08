@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cimd-proxy"
+version = "0.2.1"
+description = "OAuth 2.1 authorization proxy that speaks CIMD outward and federates to an upstream OIDC provider."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "Johannes Bayer-Albert" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "cryptography>=43",
+    "pydantic>=2.9",
+    "python-multipart>=0.0.12",
+]
+
+[project.scripts]
+cimd-proxy = "cimd_proxy.__main__:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "respx>=0.21",
+    "trustme>=1.1",
+]
+dev = [
+    "ruff>=0.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cimd_proxy"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "red_probe: red-probe pairs (guarded run + bypassed control run).",
+    "e2e: end-to-end flow against the fake OIDC provider.",
+]
+
+[tool.coverage.run]
+source = ["src/cimd_proxy"]
+branch = true
+# Sonar's Cobertura reader cannot resolve absolute <source> paths from the
+# CI runner ("/home/runner/…"). Emit paths relative to the repo root so
+# every entry maps into `sonar.sources=src`.
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "N", "S"]
+# S101: asserts are the natural idiom for validation in typed dataclasses.
+# S104: 0.0.0.0 bind is what containers do.
+# N818: OAuth error classes are named after their OAuth error codes on
+#   purpose (InvalidRequest, InvalidGrant, …) and the SSRFRefused /
+#   DocumentInvalid names are chosen to read at the call site — an "Error"
+#   suffix would just add noise.
+# UP046: PEP 695 generics are optional in 3.13, and Generic[T] reads more
+#   familiarly here.
+ignore = ["S101", "S104", "N818", "UP046"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "N", "E501"]

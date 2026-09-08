@@ -1,0 +1,23 @@
+services:
+  cimd-proxy:
+    image: ghcr.io/kumbuka-ai/cimd-proxy:v0.2.1
+    restart: unless-stopped
+    env_file:
+      - deploy.env
+    # Bound to loopback only: the reverse proxy reaches the container on the
+    # shared network, so nothing needs to be published on a public interface.
+    ports:
+      - "127.0.0.1:8081:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2); sys.exit(0 if r.status==200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    networks:
+      - edge
+
+networks:
+  edge:
+    external: true
