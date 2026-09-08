@@ -7,6 +7,7 @@
 ![CIMD](https://img.shields.io/badge/CIMD-draft--02-FF5B1F?style=flat-square)
 ![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-FF5B1F?style=flat-square)
 ![Never reads your token](https://img.shields.io/badge/your_token-never_read-141820?style=flat-square&labelColor=FF5B1F)
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=Kumbuka-ai_cimd-proxy&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Kumbuka-ai_cimd-proxy)
 
 An OAuth 2.1 authorization server that speaks **Client ID Metadata Documents**
 outward and federates to an existing OIDC provider inward, so MCP clients
