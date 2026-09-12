@@ -30,28 +30,26 @@ The ``client_id_issued_at`` is written on the server side, per §3.2.1. A
 ``client_secret`` is never emitted — the response omits it entirely rather than
 carry it with a value the client would then try to use.
 
-The Allowlist decision (Frame): a DCR client has no domain the proxy could pin
-it to — it has only its ``redirect_uris``. We apply ``CIMD_ALLOWED_DOMAINS`` to
-the hosts of every ``redirect_uri``, because that host is the one thing an
-attacker cannot freely choose without losing the callback. A registration that
-lists a host outside the allowlist is refused loud at ``/register``; there is
-no "register now, discover the refusal at /authorize" path.
+The redirect_uri policy is in :mod:`redirect_uri` and is shared with the CIMD
+route (see the docstring there for the RFC 8252 §7.3 / §8.3 details). No host
+allowlist — anonymous DCR admits any host by construction, so a check that
+would always pass would only be a false gate. Meaningful mitigations for
+untargeted registration live in Keycloak's consent step and a registration
+rate limit, both outside this proxy.
 """
 
 from __future__ import annotations
 
 import time
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from .allowlist import Allowlist
-from .config import ProxyConfig
 from .correlation import bind_correlation_id, new_correlation_id
 from .envelope import EnvelopeCodec, RegistrationEnvelope
 from .logging_setup import get_logger, sanitize
+from .redirect_uri import RedirectUriRefused, accept_registered
 
 _LOG = get_logger("cimd_proxy.register")
 
@@ -92,12 +90,11 @@ async def register(request: Request) -> JSONResponse:
     cid = new_correlation_id()
     bind_correlation_id(cid)
 
-    config: ProxyConfig = request.app.state.config
     codec: EnvelopeCodec = request.app.state.envelope_codec
 
     try:
         payload = await _read_json(request)
-        redirect_uris, auth_method, client_name = _validate(payload, config.allowlist)
+        redirect_uris, auth_method, client_name = _validate(payload)
     except _RegistrationError as exc:
         _LOG.warning(
             {
@@ -155,7 +152,7 @@ async def _read_json(request: Request) -> dict[str, Any]:
     return data
 
 
-def _validate(payload: dict[str, Any], allowlist: Allowlist) -> tuple[tuple[str, ...], str, str]:
+def _validate(payload: dict[str, Any]) -> tuple[tuple[str, ...], str, str]:
     # client_secret in a request body is a category error — public clients only.
     if "client_secret" in payload:
         raise _RegistrationError(
@@ -171,7 +168,7 @@ def _validate(payload: dict[str, Any], allowlist: Allowlist) -> tuple[tuple[str,
             "invalid_redirect_uri", "every redirect_uris entry must be a non-empty string"
         )
     for uri in raw_uris:
-        _reject_disallowed_redirect(uri, allowlist)
+        _reject_disallowed_redirect(uri)
 
     method = payload.get("token_endpoint_auth_method", "none")
     if not isinstance(method, str):
@@ -197,24 +194,15 @@ def _validate(payload: dict[str, Any], allowlist: Allowlist) -> tuple[tuple[str,
     return tuple(raw_uris), method, client_name
 
 
-def _reject_disallowed_redirect(uri: str, allowlist: Allowlist) -> None:
-    """Fail if the redirect_uri is malformed or its host is not on the allowlist.
+def _reject_disallowed_redirect(uri: str) -> None:
+    """Refuse a redirect_uri that fails the RFC 8252 §7.3 policy.
 
-    A ``redirect_uri`` must be an absolute https URL (no fragment); the host is
-    the one axis of the URL an attacker cannot forge freely without losing the
-    callback, so the allowlist decision hangs there.
+    The shared rule lives in :mod:`redirect_uri`; this wrapper turns the
+    ``RedirectUriRefused`` message into an RFC 7591 ``invalid_redirect_uri``
+    JSON error.
     """
-    split = urlsplit(uri)
-    if split.scheme != "https":
-        raise _RegistrationError("invalid_redirect_uri", f"redirect_uri {uri!r} must use https")
-    if split.fragment:
-        raise _RegistrationError(
-            "invalid_redirect_uri", f"redirect_uri {uri!r} must not carry a fragment"
-        )
-    if not split.hostname:
-        raise _RegistrationError("invalid_redirect_uri", f"redirect_uri {uri!r} has no host")
-    if not allowlist.allows(split.hostname):
-        raise _RegistrationError(
-            "invalid_redirect_uri",
-            f"redirect_uri host {split.hostname!r} is not on CIMD_ALLOWED_DOMAINS",
-        )
+
+    try:
+        accept_registered(uri)
+    except RedirectUriRefused as exc:
+        raise _RegistrationError("invalid_redirect_uri", str(exc)) from exc

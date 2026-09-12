@@ -13,7 +13,6 @@ def _min_env(**overrides: str) -> dict[str, str]:
     env = {
         "PROXY_PUBLIC_URL": "https://x.example",
         "PROXY_SECRET_KEY": "unused-secret",
-        "CIMD_ALLOWED_DOMAINS": "claude.ai",
         "RESOURCE_0_URL": "https://a.example",
         "RESOURCE_0_ISSUER": "https://issuer.example",
         "RESOURCE_0_CLIENT_ID": "cid0",
@@ -28,7 +27,6 @@ class TestRequired:
         [
             "PROXY_PUBLIC_URL",
             "PROXY_SECRET_KEY",
-            "CIMD_ALLOWED_DOMAINS",
             "RESOURCE_0_URL",
             "RESOURCE_0_ISSUER",
             "RESOURCE_0_CLIENT_ID",

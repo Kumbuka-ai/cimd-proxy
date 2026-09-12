@@ -29,7 +29,7 @@ an external network named `edge`; rename it to whatever yours is called.
 
 ```bash
 cp deploy/.env.example deploy.env
-# fill in: public URL, a fresh secret key, the allowlist, the resource table
+# fill in: public URL, a fresh secret key, the resource table
 docker compose --env-file deploy.env up -d cimd-proxy
 curl -s https://auth.example.com/.well-known/oauth-authorization-server
 ```
@@ -49,9 +49,10 @@ Work outward, one layer at a time, and stop at the first surprise.
    and that `registration_endpoint` is present if you expect clients to
    register dynamically.
 3. **The authorization step** — connect a real client. A refusal here is typed
-   and names its reason in the proxy log; the common ones are a metadata
-   document host outside the allowlist and a `resource` value absent from the
-   table.
+   and names its reason in the proxy log; the common ones are a `resource`
+   value absent from the table and a `redirect_uri` that violates the
+   RFC 8252 §7.3 shape (http on a non-loopback host, or the `localhost` name
+   rather than the `127.0.0.1` / `[::1]` literal).
 4. **The token step** — a successful connection is not proof that the audience
    is right. Call the resource once; a token with the wrong audience is
    rejected there, not at the proxy.

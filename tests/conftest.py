@@ -29,7 +29,6 @@ def base_env(secret_key: str) -> dict[str, str]:
         "PROXY_BIND_HOST": "0.0.0.0",
         "LOG_LEVEL": "WARNING",
         "CIMD_DEBUG": "false",
-        "CIMD_ALLOWED_DOMAINS": "claude.ai,*.claude.ai",
         "CIMD_CACHE_TTL_MIN": "300",
         "CIMD_CACHE_TTL_MAX": "86400",
         "CIMD_MAX_BYTES": "5120",

@@ -30,8 +30,9 @@ from tests import helpers as _helpers
 
 from ..helpers import install_fake_fetcher, resolver_returning, valid_document
 
-# A hostname the tests will lie about the DNS resolution of; the string must
-# be on the CIMD_ALLOWED_DOMAINS so the allowlist guard does not fire first.
+# A hostname the tests will lie about the DNS resolution of. The host itself
+# is irrelevant to the guard being measured — the SSRF check runs against the
+# RESOLVED address, not the name — so any valid https URL will do here.
 _CLIENT_ID = "https://a.claude.ai/mcp"
 _REDIRECT_URI = "https://claude.ai/cb"
 

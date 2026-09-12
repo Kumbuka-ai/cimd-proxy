@@ -146,3 +146,34 @@ class TestValidateDocument:
     def test_non_object_refused(self) -> None:
         with pytest.raises(DocumentInvalid):
             validate_document("https://claude.ai/mcp", ["not", "an", "object"])  # type: ignore[arg-type]
+
+    def test_loopback_http_redirect_admitted(self) -> None:
+        # RFC 8252 §7.3 — the CIMD document may list a loopback http URI.
+        url = "https://claude.ai/mcp"
+        doc = {
+            "client_id": url,
+            "redirect_uris": ["http://127.0.0.1:51580/callback"],
+        }
+        result = validate_document(url, doc)
+        assert result.redirect_uris == ("http://127.0.0.1:51580/callback",)
+
+    def test_non_loopback_http_redirect_refused(self) -> None:
+        # A CIMD document listing a non-loopback http URI cannot be used at
+        # /authorize step 4 — refuse at document-validation time rather than
+        # let a bad document sit in cache.
+        url = "https://claude.ai/mcp"
+        doc = {
+            "client_id": url,
+            "redirect_uris": ["http://evil.example/callback"],
+        }
+        with pytest.raises(DocumentInvalid, match="https"):
+            validate_document(url, doc)
+
+    def test_localhost_name_refused_in_document(self) -> None:
+        url = "https://claude.ai/mcp"
+        doc = {
+            "client_id": url,
+            "redirect_uris": ["http://localhost:51580/callback"],
+        }
+        with pytest.raises(DocumentInvalid):
+            validate_document(url, doc)

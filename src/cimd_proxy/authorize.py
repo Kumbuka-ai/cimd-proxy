@@ -16,13 +16,17 @@ Validation order matters. Every step decides whether the next is meaningful:
 
 1. ``resource`` known (or covered by ``DEFAULT_RESOURCE``).
 2. ``code_challenge_method`` == ``S256``.
-3. CIMD route: ``client_id`` host on the allowlist, then CIMD document
-   fetched and validated (identity, no secret, no shared-secret auth
-   method, non-empty ``redirect_uris``). DCR route: envelope opened,
-   ``redirect_uris`` list read from it (the allowlist has already been
-   enforced at /register — see there for the frame decision).
-4. ``redirect_uri`` byte-equal to an entry in the ``redirect_uris`` list
-   the route produced.
+3. CIMD route: the CIMD document is fetched and validated (identity, no
+   secret, no shared-secret auth method, non-empty ``redirect_uris``, and
+   the RFC 8252 §7.3 shape check on every listed URI). DCR route: the
+   envelope is opened and its sealed ``redirect_uris`` list is read. There
+   is no host allowlist — the fetcher's SSRF guard is what stops a CIMD
+   URL from being turned into an internal probe, and the DCR envelope is
+   only issuable through the /register gate.
+4. ``redirect_uri`` matches an entry in the ``redirect_uris`` list the
+   route produced. The comparison is byte-equal (RFC 3986 §6.2.1) except
+   when both URIs are loopback ``http`` URIs, where the port is ignored
+   (RFC 8252 §8.3).
 
 Before step 4 has passed, an error must not redirect (OAuth 2.1 §4.1.2.1 —
 redirecting to an unvalidated URI is itself a vulnerability). After step 4,
@@ -47,6 +51,7 @@ from .errors import InvalidClient, InvalidRequest, InvalidTarget, OAuthError
 from .fetcher import CimdDocument
 from .logging_setup import get_logger
 from .pkce import derive_challenge, make_verifier
+from .redirect_uri import uri_matches_registration
 from .upstream import authorize_url
 
 _LOG = get_logger("cimd_proxy.authorize")
@@ -156,9 +161,9 @@ async def _validate(
         document = None
         via = "dcr"
 
-    # RFC 3986 §6.2.1 comparison — no normalisation, no port defaulting,
-    # no trailing-slash forgiveness.
-    if redirect_uri not in redirect_uris:
+    # RFC 3986 §6.2.1 byte comparison, except for loopback http where the
+    # port varies at run time (RFC 8252 §8.3). Nothing else is normalised.
+    if not any(uri_matches_registration(redirect_uri, r) for r in redirect_uris):
         raise InvalidRequest(
             "redirect_uri is not registered "
             + ("in the CIMD document" if via == "cimd" else "on the DCR registration")
@@ -186,10 +191,6 @@ async def _validate(
 async def _validate_cimd(
     cimd: CimdService, client_id: str
 ) -> tuple[tuple[str, ...], CimdDocument, str]:
-    try:
-        cimd.check_allowlist(client_id)
-    except SSRFRefused as exc:
-        raise InvalidClient(str(exc)) from exc
     document = await _load_document(cimd, client_id)
     return document.redirect_uris, document, "cimd"
 
@@ -201,12 +202,9 @@ def _validate_dcr(codec: EnvelopeCodec, client_id: str) -> tuple[str, ...]:
     (authorize / code / refresh) passed in this slot — a callback-shaped code
     presented here as a client_id would otherwise unpack silently.
 
-    The allowlist has already been enforced at ``/register``: a registered
-    ``redirect_uris`` list cannot contain a host outside CIMD_ALLOWED_DOMAINS.
-    Re-checking here would be defence in depth, but it would also duplicate the
-    responsibility for the decision. If the allowlist is tightened, an existing
-    registration should re-fail at ``/authorize`` — that is F-note for a later
-    sprint, called out in the return.
+    The registration-time policy (RFC 8252 §7.3 shape) has already been
+    enforced at ``/register``; the sealed ``redirect_uris`` list is what the
+    step-4 match runs against.
     """
     try:
         envelope = codec.open_registration(client_id)
