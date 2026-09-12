@@ -51,15 +51,11 @@ class TestAcceptRegistered:
 
 class TestUriMatchesRegistration:
     def test_byte_equal(self) -> None:
-        assert uri_matches_registration(
-            "https://claude.ai/cb", "https://claude.ai/cb"
-        )
+        assert uri_matches_registration("https://claude.ai/cb", "https://claude.ai/cb")
 
     def test_https_port_still_strict(self) -> None:
         # The loopback relaxation is scheme+host-scoped; https keeps byte-equal.
-        assert not uri_matches_registration(
-            "https://claude.ai:443/cb", "https://claude.ai/cb"
-        )
+        assert not uri_matches_registration("https://claude.ai:443/cb", "https://claude.ai/cb")
 
     def test_loopback_port_agnostic(self) -> None:
         assert uri_matches_registration(
