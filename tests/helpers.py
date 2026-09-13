@@ -58,11 +58,9 @@ def install_fake_fetcher(app: object, raw_document: dict, **kwargs) -> None:
     from cimd_proxy.cache import TtlCache
     from cimd_proxy.cimd_service import CimdService
 
-    service = app.state.cimd_service  # type: ignore[attr-defined]
     cache: TtlCache[CimdDocument] = TtlCache()
     app.state.cimd_service = CimdService(  # type: ignore[attr-defined]
         fetcher=FakeFetcher(raw_document, **kwargs),
-        allowlist=service._allowlist,  # noqa: SLF001 - re-use whatever the app had
         cache=cache,
         cache_ttl_min=300,
         cache_ttl_max=86400,

@@ -39,7 +39,6 @@ def create_app(config: ProxyConfig | None = None) -> FastAPI:
     cache: TtlCache[CimdDocument] = TtlCache()
     cimd = CimdService(
         fetcher=fetcher,
-        allowlist=cfg.allowlist,
         cache=cache,
         cache_ttl_min=cfg.cimd_cache_ttl_min,
         cache_ttl_max=cfg.cimd_cache_ttl_max,

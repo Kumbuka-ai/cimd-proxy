@@ -268,6 +268,44 @@ class TestAuthorizeScope:
         assert payload.get("scope") == "openid"
 
 
+class TestAuthorizeCimdLoopback:
+    """The RFC 8252 §7.3 / §8.3 rule holds on the CIMD entry path too.
+
+    The CIMD document lists ``http://127.0.0.1:<port>/callback`` as one of
+    its ``redirect_uris``; a client that arrives with a different port on
+    the same loopback IP literal is still admitted (§8.3), and one that
+    tries the DNS name ``localhost`` cannot even land in the document
+    (§7.3, enforced at fetch time in :func:`validate_document`).
+    """
+
+    def test_cimd_document_loopback_port_may_vary(self, client: TestClient, app) -> None:
+        install_fake_fetcher(app, valid_document(_CLIENT_ID, "http://127.0.0.1:51580/callback"))
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(redirect_uri="http://127.0.0.1:43127/callback"),
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        loc = urlparse(r.headers["location"])
+        assert loc.netloc == "issuer.example"
+
+    def test_cimd_document_admits_arbitrary_host(self, client: TestClient, app) -> None:
+        # The host allowlist is gone: a CIMD client_id under an unfamiliar
+        # domain reaches the upstream as long as the document itself is
+        # well-formed.
+        install_fake_fetcher(
+            app,
+            valid_document("https://beliebige-fremde-domain.example/mcp", _REDIRECT_URI),
+            skip_dns=True,
+        )
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(client_id="https://beliebige-fremde-domain.example/mcp"),
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+
+
 class TestAuthorizeDcrRoute:
     """A ``client_id`` that opens as a RegistrationEnvelope drives the DCR route.
 
@@ -348,6 +386,109 @@ class TestAuthorizeDcrRoute:
         )
         assert r.status_code == 400
         assert "invalid_client" in r.text
+
+    def test_dcr_loopback_port_may_vary(self, client: TestClient, config) -> None:
+        # RFC 8252 §8.3: the port at which the native client actually listens
+        # is chosen at run time, so port equality is dropped when both the
+        # registered and the requested URI are loopback http URIs.
+        cid = self._make_client_id(config, "http://127.0.0.1:51580/callback")
+        r = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": "http://127.0.0.1:43127/callback",
+                "code_challenge": "chal-abcdefghijklmnopqrstuvwx",
+                "code_challenge_method": "S256",
+                "state": "s",
+                "resource": "https://log.example",
+                "scope": "openid",
+            },
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        loc = urlparse(r.headers["location"])
+        assert loc.netloc == "issuer.example"
+
+    def test_dcr_loopback_path_still_matches(self, client: TestClient, config) -> None:
+        # The path must still match exactly — only the port is agnostic.
+        cid = self._make_client_id(config, "http://127.0.0.1:51580/callback")
+        r = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": "http://127.0.0.1:43127/other-path",
+                "code_challenge": "chal-abcdefghijklmnopqrstuvwx",
+                "code_challenge_method": "S256",
+                "state": "s",
+                "resource": "https://log.example",
+                "scope": "openid",
+            },
+        )
+        assert r.status_code == 400
+        assert "redirect_uri" in r.text
+
+    def test_dcr_loopback_host_family_must_match(self, client: TestClient, config) -> None:
+        # A registration on 127.0.0.1 does NOT accept a [::1] request — the
+        # port-agnostic rule relaxes only the port, not the host literal.
+        cid = self._make_client_id(config, "http://127.0.0.1:51580/callback")
+        r = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": "http://[::1]:51580/callback",
+                "code_challenge": "chal-abcdefghijklmnopqrstuvwx",
+                "code_challenge_method": "S256",
+                "state": "s",
+                "resource": "https://log.example",
+                "scope": "openid",
+            },
+        )
+        assert r.status_code == 400
+        assert "redirect_uri" in r.text
+
+    def test_dcr_loopback_scheme_relaxation_does_not_extend_to_https(
+        self, client: TestClient, config
+    ) -> None:
+        # A registration for http://127.0.0.1:X is not accepted as https on
+        # the same host — the loopback relaxation is only about the port.
+        cid = self._make_client_id(config, "http://127.0.0.1:51580/callback")
+        r = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": "https://127.0.0.1:51580/callback",
+                "code_challenge": "chal-abcdefghijklmnopqrstuvwx",
+                "code_challenge_method": "S256",
+                "state": "s",
+                "resource": "https://log.example",
+                "scope": "openid",
+            },
+        )
+        assert r.status_code == 400
+        assert "redirect_uri" in r.text
+
+    def test_dcr_loopback_ipv6_registers_and_matches(self, client: TestClient, config) -> None:
+        # Same port-agnostic rule applies to the IPv6 loopback literal.
+        cid = self._make_client_id(config, "http://[::1]:51580/callback")
+        r = client.get(
+            "/authorize",
+            params={
+                "response_type": "code",
+                "client_id": cid,
+                "redirect_uri": "http://[::1]:43127/callback",
+                "code_challenge": "chal-abcdefghijklmnopqrstuvwx",
+                "code_challenge_method": "S256",
+                "state": "s",
+                "resource": "https://log.example",
+                "scope": "openid",
+            },
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
 
     def test_sibling_envelope_refused(self, client: TestClient, config) -> None:
         # A refresh envelope presented in the client_id slot must NOT unpack —

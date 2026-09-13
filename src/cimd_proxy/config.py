@@ -20,8 +20,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
-from .allowlist import Allowlist
-
 
 class ConfigError(RuntimeError):
     """Raised when the environment cannot be turned into a valid configuration."""
@@ -47,7 +45,6 @@ class ProxyConfig:
     bind_host: str
     log_level: str
     cimd_debug: bool
-    cimd_allowed_domains: str
     cimd_cache_ttl_min: int
     cimd_cache_ttl_max: int
     cimd_max_bytes: int
@@ -56,10 +53,6 @@ class ProxyConfig:
     scopes_supported: tuple[str, ...] = ()
     default_scope: str = ""
     resources: tuple[ResourceEntry, ...] = field(default_factory=tuple)
-
-    @property
-    def allowlist(self) -> Allowlist:
-        return Allowlist.parse(self.cimd_allowed_domains)
 
     def resource_by_url(self, url: str) -> ResourceEntry | None:
         target = _normalise_requested_url(url)
@@ -108,12 +101,6 @@ def load_config(env: Mapping[str, str] | None = None) -> ProxyConfig:
     log_level = src.get("LOG_LEVEL", "INFO").strip().upper() or "INFO"
     cimd_debug = _bool(src.get("CIMD_DEBUG", "false"), "CIMD_DEBUG")
 
-    allowed = src.get("CIMD_ALLOWED_DOMAINS", "").strip()
-    if not allowed:
-        raise ConfigError(
-            "CIMD_ALLOWED_DOMAINS is required and must be non-empty (use '*' to permit any host)"
-        )
-
     ttl_min = _int(src.get("CIMD_CACHE_TTL_MIN", "300"), "CIMD_CACHE_TTL_MIN")
     ttl_max = _int(src.get("CIMD_CACHE_TTL_MAX", "86400"), "CIMD_CACHE_TTL_MAX")
     if ttl_min <= 0 or ttl_max <= 0:
@@ -147,7 +134,6 @@ def load_config(env: Mapping[str, str] | None = None) -> ProxyConfig:
         bind_host=bind_host,
         log_level=log_level,
         cimd_debug=cimd_debug,
-        cimd_allowed_domains=allowed,
         cimd_cache_ttl_min=ttl_min,
         cimd_cache_ttl_max=ttl_max,
         cimd_max_bytes=max_bytes,

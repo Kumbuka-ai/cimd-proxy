@@ -10,8 +10,7 @@ round-trip that opens the returned ``client_id`` envelope.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
+import pytest
 from starlette.testclient import TestClient
 
 from cimd_proxy.envelope import EnvelopeCodec, RegistrationEnvelope
@@ -49,6 +48,40 @@ class TestRegisterHappyPath:
         assert r.status_code == 201, r.text
         assert r.json()["token_endpoint_auth_method"] == "none"
 
+    def test_registration_admits_arbitrary_https_host(self, client: TestClient) -> None:
+        # The Hostallowlist is gone: an anonymous DCR endpoint cannot know
+        # which client will show up, and the operator ratified the removal
+        # on 2026-09-13. A previously-off-allowlist host now registers.
+        r = client.post(
+            "/register",
+            json={"redirect_uris": ["https://beliebige-fremde-domain.example/cb"]},
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["redirect_uris"] == ["https://beliebige-fremde-domain.example/cb"]
+
+
+class TestRegisterLoopbackHttp:
+    """RFC 8252 §7.3 — http is permitted for the IP loopback literals."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "http://127.0.0.1:51580/callback",
+            "http://127.0.0.1:43127/callback",
+            "http://[::1]:51580/callback",
+        ],
+    )
+    def test_loopback_registers(self, client: TestClient, uri: str) -> None:
+        r = client.post("/register", json={"redirect_uris": [uri]})
+        assert r.status_code == 201, (uri, r.text)
+        assert r.json()["redirect_uris"] == [uri]
+
+    def test_loopback_port_is_optional_in_the_registered_form(self, client: TestClient) -> None:
+        # A registration MAY omit the port entirely (RFC 8252 §7.3 gives no
+        # requirement to name it, and the client is free to bind any port).
+        r = client.post("/register", json={"redirect_uris": ["http://127.0.0.1/callback"]})
+        assert r.status_code == 201, r.text
+
 
 class TestRegisterRefusals:
     def test_missing_redirect_uris(self, client: TestClient) -> None:
@@ -61,18 +94,24 @@ class TestRegisterRefusals:
         assert r.status_code == 400
         assert r.json()["error"] == "invalid_redirect_uri"
 
-    def test_non_https_redirect(self, client: TestClient) -> None:
-        r = client.post("/register", json={"redirect_uris": ["http://claude.ai/cb"]})
+    def test_non_loopback_http_refused(self, client: TestClient) -> None:
+        r = client.post("/register", json={"redirect_uris": ["http://evil.example/callback"]})
+        assert r.status_code == 400
+        payload = r.json()
+        assert payload["error"] == "invalid_redirect_uri"
+        assert "https" in payload["error_description"]
+
+    def test_localhost_name_refused(self, client: TestClient) -> None:
+        # RFC 8252 §8.3 recommends the IP literal explicitly because the name
+        # 'localhost' is DNS-resolvable and can be redirected via /etc/hosts.
+        r = client.post("/register", json={"redirect_uris": ["http://localhost:51580/callback"]})
         assert r.status_code == 400
         assert r.json()["error"] == "invalid_redirect_uri"
 
-    def test_redirect_host_off_allowlist(self, app_factory: Callable[..., object]) -> None:
-        app = app_factory(CIMD_ALLOWED_DOMAINS="claude.ai,*.claude.ai")
-        client = TestClient(app)  # type: ignore[arg-type]
-        r = client.post("/register", json={"redirect_uris": ["https://evil.example/cb"]})
+    def test_fragment_refused(self, client: TestClient) -> None:
+        r = client.post("/register", json={"redirect_uris": ["https://example.com/cb#frag"]})
         assert r.status_code == 400
         assert r.json()["error"] == "invalid_redirect_uri"
-        assert "evil.example" in r.json()["error_description"]
 
     def test_client_secret_not_accepted(self, client: TestClient) -> None:
         r = client.post(

@@ -1,18 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Johannes Bayer-Albert
 # SPDX-License-Identifier: Apache-2.0
 
-"""CIMD-document service: fetch + cache + policy.
+"""CIMD-document service: fetch + cache.
 
 The cache is populated only after both SSRF checks *and* the document schema
 have accepted a response — a stored 404 or a stored malformed document would
 render a bad client permanently un-fixable. The TTL comes from the response's
 ``Cache-Control: max-age`` header, clamped to ``[min, max]``; absent header
 uses ``min``.
+
+There is no host allowlist. A CIMD ``client_id`` URL is admitted on its
+own shape (https, absolute, non-empty path, no fragment, no userinfo — see
+:func:`fetcher.parse_client_id_url`) and the SSRF guard on the resolved
+addresses is what keeps the fetch from being turned into an internal probe.
 """
 
 from __future__ import annotations
 
-from .allowlist import Allowlist
 from .cache import TtlCache, choose_ttl
 from .fetcher import (
     CimdDocument,
@@ -21,7 +25,6 @@ from .fetcher import (
     FetchError,
     FetchResult,
     SSRFRefused,
-    parse_client_id_url,
 )
 
 
@@ -30,27 +33,14 @@ class CimdService:
         self,
         *,
         fetcher: CimdFetcher,
-        allowlist: Allowlist,
         cache: TtlCache[CimdDocument],
         cache_ttl_min: int,
         cache_ttl_max: int,
     ) -> None:
         self._fetcher = fetcher
-        self._allowlist = allowlist
         self._cache = cache
         self._ttl_min = cache_ttl_min
         self._ttl_max = cache_ttl_max
-
-    def check_allowlist(self, client_id_url: str) -> None:
-        """Raise :class:`SSRFRefused` if the URL host is not on the allowlist.
-
-        Named ``check_allowlist`` and kept as a distinct step so that the
-        RP1 test can measure exactly this guard (see red-probe control run).
-        """
-
-        parsed = parse_client_id_url(client_id_url)
-        if not self._allowlist.allows(parsed.hostname):
-            raise SSRFRefused(f"client_id host {parsed.hostname!r} is not on CIMD_ALLOWED_DOMAINS")
 
     async def obtain(self, client_id_url: str) -> CimdDocument:
         """Return a validated document, from cache when possible.

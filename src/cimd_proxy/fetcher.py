@@ -36,6 +36,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .redirect_uri import RedirectUriRefused, accept_registered
+
 
 class FetchError(Exception):
     """Raised when the CIMD URL cannot be fetched safely or the response is unusable."""
@@ -167,6 +169,15 @@ def validate_document(url: str, document: dict[str, Any]) -> CimdDocument:
         raise DocumentInvalid("CIMD document must carry a non-empty redirect_uris array")
     if not all(isinstance(u, str) and u for u in redirect_uris):
         raise DocumentInvalid("every redirect_uris entry must be a non-empty string")
+    # RFC 8252 §7.3 / §8.3 — same policy as the DCR registration path. A CIMD
+    # document that lists a http URI on a non-loopback host is refused here so
+    # a document that cannot be used at /authorize step 4 is not silently
+    # cached.
+    for uri in redirect_uris:
+        try:
+            accept_registered(uri)
+        except RedirectUriRefused as exc:
+            raise DocumentInvalid(str(exc)) from exc
     return CimdDocument(
         client_id=client_id,
         redirect_uris=tuple(redirect_uris),
