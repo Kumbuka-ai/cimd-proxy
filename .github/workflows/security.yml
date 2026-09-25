@@ -1,0 +1,53 @@
+# The security gates: Semgrep OSS, Trivy and Gitleaks.
+#
+# The definition lives once, in Kumbuka-ai/workflows, and this file calls it.
+# Copied into each repository the checks drift apart, and a rule change has to
+# be made once per repository rather than once. An exception this repository
+# needs belongs to its own tool configuration (.semgrepignore, .trivyignore.yaml,
+# .gitleaksignore) — never to the shared workflow, which must keep asking every
+# repository the same question.
+#
+# Each tool runs as a job that turns the run RED on a finding. A check whose
+# result lands somewhere nobody looks is not a check.
+#
+# No existing job is touched by this file. It adds jobs; it changes none.
+
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Daily, and this is the part with no alternative. Everything else reacts to a
+  # push: a repository nobody touches would never learn that a new CVE was
+  # published against a dependency it already ships — nor that a fix it has been
+  # waiting for has arrived. An unfixed vulnerability does not block; the moment
+  # upstream publishes a fix it blocks by itself, and that only fires when a
+  # scan actually runs.
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    uses: Kumbuka-ai/workflows/.github/workflows/reusable-security.yml@main
+
+  security-images:
+    uses: Kumbuka-ai/workflows/.github/workflows/reusable-security-image.yml@main
+    # A called workflow cannot be granted a permission the caller does not hold,
+    # and the image build needs packages:read to pull artefacts from GitHub
+    # Packages. Without this block GitHub rejects the whole file, which takes
+    # the scan jobs down with it — not just the image scan.
+    permissions:
+      contents: read
+      packages: read
+    with:
+      image-targets: >-
+        [{"name": "cimd-proxy", "context": ".", "file": "Dockerfile"}]
