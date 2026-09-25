@@ -13,6 +13,14 @@ RUN pip wheel --no-cache-dir --wheel-dir=/wheels .
 
 FROM python:3.13-slim AS runtime
 
+# Patch the base image's OS packages before anything else lands. A base image is
+# rebuilt on its own schedule and routinely carries packages whose fixes are
+# already published; upgrading here closes that gap at build time rather than
+# waiting for the upstream rebuild.
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 ARG APP_UID=10001
 ARG APP_GID=10001
 
