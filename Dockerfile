@@ -30,10 +30,18 @@ RUN groupadd --system --gid "${APP_GID}" cimd \
 
 WORKDIR /app
 
-# Only wheels come across from build; the toolchain does not.
-COPY --from=build /wheels /wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels cimd-proxy \
- && rm -rf /wheels
+# The wheels are bind-mounted from the build stage, not copied in.
+#
+# `COPY --from=build /wheels /wheels` followed by `rm -rf /wheels` looks
+# equivalent and is not: the COPY writes a layer, and deleting the directory
+# afterwards only adds a whiteout on top. The wheel files stay in the image's
+# layer history, where an image scanner still finds them — which is how this
+# image reported msgpack 1.1.2 while 1.2.2 was the version actually installed.
+#
+# A bind mount exists only for the duration of the RUN, so nothing is written
+# and there is nothing to clean up.
+RUN --mount=type=bind,from=build,source=/wheels,target=/wheels \
+    pip install --no-cache-dir --no-index --find-links=/wheels cimd-proxy
 
 # Raise the two packages the image scan flags, neither of which this project
 # declares: setuptools comes preinstalled in python:3.13-slim, and msgpack
