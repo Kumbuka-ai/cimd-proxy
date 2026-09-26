@@ -35,6 +35,15 @@ COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir --no-index --find-links=/wheels cimd-proxy \
  && rm -rf /wheels
 
+# Raise the two packages the image scan flags, neither of which this project
+# declares: setuptools comes preinstalled in python:3.13-slim, and msgpack
+# arrives transitively through uvicorn[standard]. Both have published fixes, so
+# leaving them means shipping a known-vulnerable package because the base image
+# has not caught up.
+RUN pip install --no-cache-dir --upgrade \
+      "setuptools>=78.1.1" \
+      "msgpack>=1.2.1"
+
 USER cimd
 
 EXPOSE 8080
