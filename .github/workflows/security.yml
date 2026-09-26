@@ -18,14 +18,20 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Daily, and this is the part with no alternative. Everything else reacts to a
-  # push: a repository nobody touches would never learn that a new CVE was
-  # published against a dependency it already ships — nor that a fix it has been
-  # waiting for has arrived. An unfixed vulnerability does not block; the moment
-  # upstream publishes a fix it blocks by itself, and that only fires when a
-  # scan actually runs.
+  # Weekly, Mondays. It was daily until the organisation hit its Actions
+  # spending limit — eighteen repositories scanning every night, eight of them
+  # building container images, is real money for a signal that rarely changes
+  # between one day and the next.
+  #
+  # The clock still matters and this is why it is not simply switched off: a
+  # repository nobody pushes to would otherwise never learn that a new CVE was
+  # published against something it ships, nor that a fix it has been waiting
+  # for has arrived. An unfixed vulnerability starts blocking by itself the day
+  # a fix appears — but only when a scan runs.
+  #
+  # Back to daily once the jobs run on self-hosted runners and cost nothing.
   schedule:
-    - cron: "37 4 * * *"
+    - cron: "37 4 * * 1"
   workflow_dispatch:
 
 concurrency:
