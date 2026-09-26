@@ -48,9 +48,27 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/wheels \
 # arrives transitively through uvicorn[standard]. Both have published fixes, so
 # leaving them means shipping a known-vulnerable package because the base image
 # has not caught up.
-RUN pip install --no-cache-dir --upgrade \
-      "setuptools>=78.1.1" \
-      "msgpack>=1.2.1"
+# Raise setuptools, then remove pip itself.
+#
+# The image scan reported setuptools 70.3.0 and msgpack 1.1.2 next to the
+# 84.0.0 and 1.2.2 that were demonstrably installed. Neither phantom was in
+# site-packages; both come from `pip/_vendor/vendor.txt`, which pins the copies
+# pip carries for its own use — the file says `msgpack==1.1.2` and
+# `setuptools==70.3.0` in as many words, and Trivy reads it.
+#
+# So the versions were never the problem and no amount of upgrading moved them.
+# What removes them is removing pip: this image starts with
+# `python -m cimd_proxy` and installs nothing at run time, so a package manager
+# in the runtime layer is dependency surface kept for nothing. Same reasoning as
+# dropping npm from the Node images.
+#
+# setuptools is still raised first: it comes with the base image, is used at
+# build time here, and the upgrade is what the scanner will look at once pip's
+# vendored copy is gone.
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" \
+ && PY_SITE=$(python -c 'import site; print(site.getsitepackages()[0])') \
+ && rm -rf "$PY_SITE"/pip "$PY_SITE"/pip-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
 
 USER cimd
 
