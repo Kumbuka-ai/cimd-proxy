@@ -7,7 +7,11 @@ Three of them, all against the realm in ``PAT_REALM_ISSUER``:
 
 * introspection of the caller's own access token at the management endpoints
   (RFC 7662), with the proxy's admin client as the introspecting party — the
-  token is judged by the provider that issued it, not parsed here;
+  token is judged by the provider that issued it, not parsed here. Keycloak 26.7
+  answers ``active: false`` when the introspecting client is not in the token's
+  audience, and an owner's token is audienced for the resource it was issued
+  for; the admin client therefore carries
+  ``allow.token.introspection.without.audience.check=true`` (measured both ways);
 * the federated identity link between the owner and the proxy's identity
   provider, which is how Keycloak maps an assertion's ``sub`` to a user. Setting
   it needs ``realm-management/manage-users`` on the admin client (measured: a
