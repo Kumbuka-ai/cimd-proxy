@@ -17,6 +17,8 @@ dependencies = [
     "cryptography>=43",
     "pydantic>=2.9",
     "python-multipart>=0.0.12",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
 ]
 
 [project.scripts]
@@ -29,6 +31,7 @@ test = [
     "pytest-cov>=5.0",
     "respx>=0.21",
     "trustme>=1.1",
+    "testcontainers>=4.8",
 ]
 dev = [
     "ruff>=0.7",
@@ -45,6 +48,7 @@ testpaths = ["tests"]
 markers = [
     "red_probe: red-probe pairs (guarded run + bypassed control run).",
     "e2e: end-to-end flow against the fake OIDC provider.",
+    "integration: needs Docker (a real PostgreSQL and, for the exchange, a real Keycloak).",
 ]
 
 [tool.coverage.run]

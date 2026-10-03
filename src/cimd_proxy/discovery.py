@@ -8,6 +8,10 @@ speaks both sides at once: an https-URL ``client_id`` goes the CIMD route,
 ``client_id_metadata_document_supported: true`` still announces it, and a
 posted DCR registration goes the RFC 7591 route.
 
+``extra_grant_types`` carries the token-exchange grant when personal access
+tokens are configured, and nothing otherwise: the document names only what the
+running instance will accept.
+
 ``scopes_supported`` is fed from configuration (``PROXY_SCOPES_SUPPORTED``).
 An empty configured value omits the field entirely rather than shipping an
 empty array — an empty array would announce that the server supports no
@@ -24,6 +28,7 @@ def build_discovery_document(
     *,
     scopes_supported: tuple[str, ...] = (),
     registration_endpoint: bool = False,
+    extra_grant_types: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     base = public_url.rstrip("/")
     doc: dict[str, Any] = {
@@ -31,7 +36,7 @@ def build_discovery_document(
         "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/token",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "refresh_token", *extra_grant_types],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "client_id_metadata_document_supported": True,
