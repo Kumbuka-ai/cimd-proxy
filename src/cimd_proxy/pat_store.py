@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from psycopg import sql
+from psycopg import errors, sql
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -119,13 +119,16 @@ class PostgresPatStore:
         await self._pool.close()
 
     async def check_schema(self) -> None:
-        async with self._pool.connection() as conn:
-            cur = await conn.execute(
-                sql.SQL("SELECT coalesce(max(version), 0) FROM {}.schema_history").format(
-                    self._schema
+        try:
+            async with self._pool.connection() as conn:
+                cur = await conn.execute(
+                    sql.SQL("SELECT coalesce(max(version), 0) FROM {}.schema_history").format(
+                        self._schema
+                    )
                 )
-            )
-            row = await cur.fetchone()
+                row = await cur.fetchone()
+        except (errors.UndefinedTable, errors.InvalidSchemaName):
+            row = None
         current = row[0] if row else 0
         if current != latest_version():
             raise SchemaBehind(
