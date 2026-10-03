@@ -85,8 +85,9 @@ def test_lifetime_outside_one_to_sixty_seconds_is_refused(rsa_key, lifetime: int
 
 
 def test_unknown_active_kid_is_refused(rsa_key) -> None:
+    keys = (SigningKey.from_pem("k1", _pem(rsa_key)),)
     with pytest.raises(SigningKeyError):
-        AssertionSigner("i", (SigningKey.from_pem("k1", _pem(rsa_key)),), "k2")
+        AssertionSigner("i", keys, "k2")
 
 
 def test_non_rsa_short_and_garbage_keys_are_refused() -> None:
