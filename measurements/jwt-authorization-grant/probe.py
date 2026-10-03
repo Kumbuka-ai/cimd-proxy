@@ -92,8 +92,10 @@ class JwksServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802
                 outer.hits += 1
-                print(f"    [jwks fetch #{outer.hits} at +{time.monotonic() - outer.started:.1f}s, "
-                      f"serving {[k.kid for k in outer.keys]}]")
+                print(
+                    f"    [jwks fetch #{outer.hits} at +{time.monotonic() - outer.started:.1f}s, "
+                    f"serving {[k.kid for k in outer.keys]}]"
+                )
                 body = json.dumps({"keys": [k.jwk() for k in outer.keys]}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -125,8 +127,12 @@ class Probe:
     def admin_token(self) -> str:
         r = self.http.post(
             f"{self.kc}/realms/master/protocol/openid-connect/token",
-            data={"client_id": "admin-cli", "username": "admin", "password": "admin",
-                  "grant_type": "password"},
+            data={
+                "client_id": "admin-cli",
+                "username": "admin",
+                "password": "admin",
+                "grant_type": "password",
+            },
         )
         r.raise_for_status()
         return r.json()["access_token"]
@@ -145,40 +151,63 @@ class Probe:
         # Client scopes are created after the import: a realm import that carries
         # its own clientScopes list replaces the built-in ones (roles, basic, ...).
         for scope, role in (("set-memory", "r-memory"), ("set-dispatch", "dispatch-executor")):
-            self.admin("POST", f"/{REALM}/client-scopes", json={
-                "name": scope, "protocol": "openid-connect",
-                "attributes": {"include.in.token.scope": "true",
-                               "display.on.consent.screen": "false"},
-            }).raise_for_status()
-            sid = next(s["id"] for s in self.admin("GET", f"/{REALM}/client-scopes").json()
-                       if s["name"] == scope)
+            self.admin(
+                "POST",
+                f"/{REALM}/client-scopes",
+                json={
+                    "name": scope,
+                    "protocol": "openid-connect",
+                    "attributes": {
+                        "include.in.token.scope": "true",
+                        "display.on.consent.screen": "false",
+                    },
+                },
+            ).raise_for_status()
+            sid = next(
+                s["id"]
+                for s in self.admin("GET", f"/{REALM}/client-scopes").json()
+                if s["name"] == scope
+            )
             role_rep = self.admin("GET", f"/{REALM}/roles/{role}").json()
-            self.admin("POST", f"/{REALM}/client-scopes/{sid}/scope-mappings/realm",
-                       json=[role_rep]).raise_for_status()
+            self.admin(
+                "POST", f"/{REALM}/client-scopes/{sid}/scope-mappings/realm", json=[role_rep]
+            ).raise_for_status()
             for client in ("up-x", "up-y"):
                 cid = self.client_uuid(client)
-                self.admin("PUT", f"/{REALM}/clients/{cid}/optional-client-scopes/{sid}"
-                           ).raise_for_status()
+                self.admin(
+                    "PUT", f"/{REALM}/clients/{cid}/optional-client-scopes/{sid}"
+                ).raise_for_status()
 
     def setup_organizations(self) -> None:
         rep = self.admin("GET", f"/{REALM}").json()
         rep["organizationsEnabled"] = True
         self.admin("PUT", f"/{REALM}", json=rep).raise_for_status()
         for org, member in (("tenant-a", "alice"), ("tenant-b", "bob")):
-            self.admin("POST", f"/{REALM}/organizations", json={
-                "name": org, "alias": org, "enabled": True,
-                "domains": [{"name": f"{org}.example.test"}],
-            }).raise_for_status()
+            self.admin(
+                "POST",
+                f"/{REALM}/organizations",
+                json={
+                    "name": org,
+                    "alias": org,
+                    "enabled": True,
+                    "domains": [{"name": f"{org}.example.test"}],
+                },
+            ).raise_for_status()
             self.add_org_member(org, member)
-        sid = next(s["id"] for s in self.admin("GET", f"/{REALM}/client-scopes").json()
-                   if s["name"] == "organization")
-        self.admin("PUT", f"/{REALM}/clients/{self.client_uuid('up-x')}/default-client-scopes/{sid}"
-                   ).raise_for_status()
+        sid = next(
+            s["id"]
+            for s in self.admin("GET", f"/{REALM}/client-scopes").json()
+            if s["name"] == "organization"
+        )
+        self.admin(
+            "PUT", f"/{REALM}/clients/{self.client_uuid('up-x')}/default-client-scopes/{sid}"
+        ).raise_for_status()
 
     def add_org_member(self, org: str, member: str) -> None:
         orgs = self.admin("GET", f"/{REALM}/organizations", params={"search": org}).json()
-        self.admin("POST", f"/{REALM}/organizations/{orgs[0]['id']}/members",
-                   json=self.user_id(member)).raise_for_status()
+        self.admin(
+            "POST", f"/{REALM}/organizations/{orgs[0]['id']}/members", json=self.user_id(member)
+        ).raise_for_status()
 
     def client_uuid(self, client_id: str) -> str:
         clients = self.admin("GET", f"/{REALM}/clients", params={"clientId": client_id}).json()
@@ -210,23 +239,34 @@ class Probe:
         rm = {"id": self.client_uuid("realm-management")}
         role_rep = self.admin("GET", f"/{REALM}/clients/{rm['id']}/roles/{role}").json()
         self.admin(
-            "POST", f"/{REALM}/users/{sa_user['id']}/role-mappings/clients/{rm['id']}",
+            "POST",
+            f"/{REALM}/users/{sa_user['id']}/role-mappings/clients/{rm['id']}",
             json=[role_rep],
         ).raise_for_status()
 
     def proxy_admin_token(self) -> str:
-        r = self.http.post(self.token_endpoint, data={
-            "grant_type": "client_credentials", "client_id": "proxy-admin",
-            "client_secret": "measurement-only-proxy-admin"})
+        r = self.http.post(
+            self.token_endpoint,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": "proxy-admin",
+                "client_secret": "measurement-only-proxy-admin",
+            },
+        )
         r.raise_for_status()
         return r.json()["access_token"]
 
     def link(self, username: str, token: str, external_id: str | None = None) -> int:
         uid = self.user_id(username)
         r = self.admin(
-            "POST", f"/{REALM}/users/{uid}/federated-identity/pat-issuer", token=token,
-            json={"identityProvider": "pat-issuer", "userId": external_id or uid,
-                  "userName": username},
+            "POST",
+            f"/{REALM}/users/{uid}/federated-identity/pat-issuer",
+            token=token,
+            json={
+                "identityProvider": "pat-issuer",
+                "userId": external_id or uid,
+                "userName": username,
+            },
         )
         return r.status_code
 
@@ -235,16 +275,33 @@ class Probe:
         self.admin("DELETE", f"/{REALM}/users/{uid}/federated-identity/pat-issuer")
 
     # --- grant ------------------------------------------------------------
-    def assertion(self, key: Key, sub: str, *, exp_in: int = 60, kid: str | None = None,
-                  aud: str | None = None, jti: str | None = None, iss: str = ISSUER) -> str:
+    def assertion(
+        self,
+        key: Key,
+        sub: str,
+        *,
+        exp_in: int = 60,
+        kid: str | None = None,
+        aud: str | None = None,
+        jti: str | None = None,
+        iss: str = ISSUER,
+    ) -> str:
         now = int(time.time())
-        return key.sign({
-            "iss": iss, "sub": sub, "aud": aud or self.realm_issuer,
-            "iat": now, "exp": now + exp_in, "jti": jti or str(uuid.uuid4()),
-        }, kid=kid)
+        return key.sign(
+            {
+                "iss": iss,
+                "sub": sub,
+                "aud": aud or self.realm_issuer,
+                "iat": now,
+                "exp": now + exp_in,
+                "jti": jti or str(uuid.uuid4()),
+            },
+            kid=kid,
+        )
 
-    def grant(self, assertion: str, *, client: str = "up-x", scope: str | None = None
-              ) -> tuple[int, dict[str, Any]]:
+    def grant(
+        self, assertion: str, *, client: str = "up-x", scope: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
         form = {
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": assertion,
@@ -273,8 +330,10 @@ def claims_line(status: int, body: dict[str, Any]) -> str:
     if status != 200:
         return f"{status} {body.get('error')} {body.get('error_description')!r}"
     c = jwt_claims(body["access_token"])
-    return (f"200 organization={c.get('organization')} sid={'present' if 'sid' in c else 'absent'} "
-            f"typ={c.get('typ')} claims={sorted(c)}")
+    return (
+        f"200 organization={c.get('organization')} sid={'present' if 'sid' in c else 'absent'} "
+        f"typ={c.get('typ')} claims={sorted(c)}"
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -296,11 +355,14 @@ def run(args: argparse.Namespace) -> int:
     alice, bob, carol = p.user_id("alice"), p.user_id("bob"), p.user_id("carol")
 
     # 3. linking needs a right: none, view-users, manage-users
-    record("3a link alice with no realm-management role",
-           lambda: f"HTTP {p.link('alice', p.proxy_admin_token())}")
+    record(
+        "3a link alice with no realm-management role",
+        lambda: f"HTTP {p.link('alice', p.proxy_admin_token())}",
+    )
     p.grant_proxy_admin_role("view-users")
-    record("3b link alice with view-users",
-           lambda: f"HTTP {p.link('alice', p.proxy_admin_token())}")
+    record(
+        "3b link alice with view-users", lambda: f"HTTP {p.link('alice', p.proxy_admin_token())}"
+    )
     p.grant_proxy_admin_role("manage-users")
 
     def link_then_unlink(user: str) -> str:
@@ -308,8 +370,9 @@ def run(args: argparse.Namespace) -> int:
         p.unlink(user)
         return f"HTTP {code}"
 
-    record("3c link carol with manage-users (then unlinked again)",
-           lambda: link_then_unlink("carol"))
+    record(
+        "3c link carol with manage-users (then unlinked again)", lambda: link_then_unlink("carol")
+    )
     assert p.link("alice", p.proxy_admin_token()) == 204
     assert p.link("bob", p.proxy_admin_token()) == 204
 
@@ -317,23 +380,37 @@ def run(args: argparse.Namespace) -> int:
     record("2 alice, key A, no scope", lambda: summarise(*p.grant(p.assertion(key_a, alice))))
 
     # 3. user matching
-    record("3d carol unlinked, sub = her Keycloak id",
-           lambda: summarise(*p.grant(p.assertion(key_a, carol))))
-    record("3e sub = username 'alice' (link carries the Keycloak id)",
-           lambda: summarise(*p.grant(p.assertion(key_a, "alice"))))
+    record(
+        "3d carol unlinked, sub = her Keycloak id",
+        lambda: summarise(*p.grant(p.assertion(key_a, carol))),
+    )
+    record(
+        "3e sub = username 'alice' (link carries the Keycloak id)",
+        lambda: summarise(*p.grant(p.assertion(key_a, "alice"))),
+    )
 
     # 4. permission set per request
     for scope in ("set-memory", "set-dispatch", "set-memory set-dispatch"):
-        record(f"4 alice scope={scope!r}",
-               lambda s=scope: summarise(*p.grant(p.assertion(key_a, alice), scope=s)))
-    record("4 bob scope='set-memory set-dispatch' (bob holds no dispatch-executor)",
-           lambda: summarise(*p.grant(p.assertion(key_a, bob), scope="set-memory set-dispatch")))
-    record("4 alice scope='offline_access' (offline scope on the jwt grant)",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="offline_access")))
-    record("4 alice scope='set-unknown'",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="set-unknown")))
-    record("4 client up-y (grant not enabled there)",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice), client="up-y")))
+        record(
+            f"4 alice scope={scope!r}",
+            lambda s=scope: summarise(*p.grant(p.assertion(key_a, alice), scope=s)),
+        )
+    record(
+        "4 bob scope='set-memory set-dispatch' (bob holds no dispatch-executor)",
+        lambda: summarise(*p.grant(p.assertion(key_a, bob), scope="set-memory set-dispatch")),
+    )
+    record(
+        "4 alice scope='offline_access' (offline scope on the jwt grant)",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="offline_access")),
+    )
+    record(
+        "4 alice scope='set-unknown'",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="set-unknown")),
+    )
+    record(
+        "4 client up-y (grant not enabled there)",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice), client="up-y")),
+    )
 
     # 5. refusals
     def disabled() -> str:
@@ -345,14 +422,19 @@ def run(args: argparse.Namespace) -> int:
 
     record("5a alice disabled", disabled)
     record("5a' alice re-enabled", lambda: summarise(*p.grant(p.assertion(key_a, alice))))
-    record("5b foreign key, own kid",
-           lambda: summarise(*p.grant(p.assertion(key_b, alice))))
-    record("5b' foreign key, spoofed kid of key A",
-           lambda: summarise(*p.grant(p.assertion(key_b, alice, kid=key_a.kid))))
-    record("5c expired assertion (exp = now - 5)",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice, exp_in=-5))))
-    record("5d assertion lifetime above the IdP maximum (exp = now + 3600)",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice, exp_in=3600))))
+    record("5b foreign key, own kid", lambda: summarise(*p.grant(p.assertion(key_b, alice))))
+    record(
+        "5b' foreign key, spoofed kid of key A",
+        lambda: summarise(*p.grant(p.assertion(key_b, alice, kid=key_a.kid))),
+    )
+    record(
+        "5c expired assertion (exp = now - 5)",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice, exp_in=-5))),
+    )
+    record(
+        "5d assertion lifetime above the IdP maximum (exp = now + 3600)",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice, exp_in=3600))),
+    )
 
     def reuse() -> str:
         a = p.assertion(key_a, alice)
@@ -360,52 +442,79 @@ def run(args: argparse.Namespace) -> int:
         return f"first={first} second={summarise(*p.grant(a))}"
 
     record("5e same assertion twice", reuse)
-    record("5f wrong issuer",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice, iss="https://evil.test"))))
+    record(
+        "5f wrong issuer",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice, iss="https://evil.test"))),
+    )
 
     # 6. lifetime
     for lifespan in ("60", "300"):
         p.set_client_attr("up-x", "access.token.lifespan", lifespan)
-        record(f"6 access.token.lifespan={lifespan}",
-               lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="set-memory")))
+        record(
+            f"6 access.token.lifespan={lifespan}",
+            lambda: summarise(*p.grant(p.assertion(key_a, alice), scope="set-memory")),
+        )
 
     # 7. rotation
     jwks.keys = [key_a, key_a2]
-    record("7a JWKS {A, A2} at once: new key A2",
-           lambda: summarise(*p.grant(p.assertion(key_a2, alice))))
+    record(
+        "7a JWKS {A, A2} at once: new key A2",
+        lambda: summarise(*p.grant(p.assertion(key_a2, alice))),
+    )
     print(f"    (waiting {args.rotation_wait}s)")
     time.sleep(args.rotation_wait)
-    record(f"7b JWKS {{A, A2}} after {args.rotation_wait}s: new key A2",
-           lambda: summarise(*p.grant(p.assertion(key_a2, alice))))
+    record(
+        f"7b JWKS {{A, A2}} after {args.rotation_wait}s: new key A2",
+        lambda: summarise(*p.grant(p.assertion(key_a2, alice))),
+    )
     record("7c JWKS {A, A2}: old key A", lambda: summarise(*p.grant(p.assertion(key_a, alice))))
     jwks.keys = [key_a2]
     print(f"    (A removed from the JWKS; waiting {args.rotation_wait}s)")
     time.sleep(args.rotation_wait)
-    record(f"7d JWKS {{A2}} after {args.rotation_wait}s: removed key A",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice))))
+    record(
+        f"7d JWKS {{A2}} after {args.rotation_wait}s: removed key A",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice))),
+    )
     p.clear_keys_cache()
-    record("7e JWKS {A2} after clear-keys-cache: removed key A",
-           lambda: summarise(*p.grant(p.assertion(key_a, alice))))
-    record("7f JWKS {A2} after clear-keys-cache: key A2",
-           lambda: summarise(*p.grant(p.assertion(key_a2, alice))))
+    record(
+        "7e JWKS {A2} after clear-keys-cache: removed key A",
+        lambda: summarise(*p.grant(p.assertion(key_a, alice))),
+    )
+    record(
+        "7f JWKS {A2} after clear-keys-cache: key A2",
+        lambda: summarise(*p.grant(p.assertion(key_a2, alice))),
+    )
     # 8. tenants as organizations, and session markers
     p.setup_organizations()
-    record("8a alice (member of tenant-a), no scope",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, alice))))
-    record("8b alice, scope='organization:tenant-b' (not a member)",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, alice), scope="organization:tenant-b")))
-    record("8c bob (member of tenant-b), no scope",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, bob))))
+    record(
+        "8a alice (member of tenant-a), no scope",
+        lambda: claims_line(*p.grant(p.assertion(key_a2, alice))),
+    )
+    record(
+        "8b alice, scope='organization:tenant-b' (not a member)",
+        lambda: claims_line(*p.grant(p.assertion(key_a2, alice), scope="organization:tenant-b")),
+    )
+    record(
+        "8c bob (member of tenant-b), no scope",
+        lambda: claims_line(*p.grant(p.assertion(key_a2, bob))),
+    )
     p.add_org_member("tenant-b", "alice")
-    record("8d alice member of tenant-a and tenant-b, no scope",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, alice))))
-    record("8e alice member of both, scope='organization:tenant-a'",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, alice), scope="organization:tenant-a")))
+    record(
+        "8d alice member of tenant-a and tenant-b, no scope",
+        lambda: claims_line(*p.grant(p.assertion(key_a2, alice))),
+    )
+    record(
+        "8e alice member of both, scope='organization:tenant-a'",
+        lambda: claims_line(*p.grant(p.assertion(key_a2, alice), scope="organization:tenant-a")),
+    )
     p.set_client_attr("up-y", "oauth2.jwt.authorization.grant.enabled", "true")
     p.set_client_attr("up-y", "oauth2.jwt.authorization.grant.idp", "pat-issuer")
-    record("8f client up-y without the organization scope, scope='organization:tenant-a'",
-           lambda: claims_line(*p.grant(p.assertion(key_a2, alice), client="up-y",
-                                        scope="organization:tenant-a")))
+    record(
+        "8f client up-y without the organization scope, scope='organization:tenant-a'",
+        lambda: claims_line(
+            *p.grant(p.assertion(key_a2, alice), client="up-y", scope="organization:tenant-a")
+        ),
+    )
     print(f"JWKS fetches by Keycloak: {jwks.hits}")
 
     disagreements = [k for k, v in results.items() if len(set(v)) != 1]
