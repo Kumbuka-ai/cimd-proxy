@@ -1,0 +1,111 @@
+[agree] 3a link alice with no realm-management role
+    run 1: HTTP 403
+    run 2: HTTP 403
+[agree] 3b link alice with view-users
+    run 1: HTTP 403
+    run 2: HTTP 403
+[agree] 3c link carol with manage-users (then unlinked again)
+    run 1: HTTP 204
+    run 2: HTTP 204
+    [jwks fetch #1 at +6.5s, serving ['proxy-2026-a']]
+[agree] 2 alice, key A, no scope
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+[agree] 3d carol unlinked, sub = her Keycloak id
+    run 1: 400 invalid_grant 'User not found'
+    run 2: 400 invalid_grant 'User not found'
+[agree] 3e sub = username 'alice' (link carries the Keycloak id)
+    run 1: 400 invalid_grant 'User not found'
+    run 2: 400 invalid_grant 'User not found'
+[agree] 4 alice scope='set-memory'
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+[agree] 4 alice scope='set-dispatch'
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['dispatch-executor'] scope='set-dispatch profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['dispatch-executor'] scope='set-dispatch profile' exp-iat=300 refresh_token=absent
+[agree] 4 alice scope='set-memory set-dispatch'
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['dispatch-executor', 'r-memory'] scope='set-dispatch set-memory profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['dispatch-executor', 'r-memory'] scope='set-dispatch set-memory profile' exp-iat=300 refresh_token=absent
+[agree] 4 bob scope='set-memory set-dispatch' (bob holds no dispatch-executor)
+    run 1: 200 sub=b2642e1d-20b7-4666-b00b-4722d38241f6 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=b2642e1d-20b7-4666-b00b-4722d38241f6 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+[agree] 4 alice scope='offline_access' (offline scope on the jwt grant)
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['offline_access'] scope='offline_access profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['offline_access'] scope='offline_access profile' exp-iat=300 refresh_token=absent
+[agree] 4 alice scope='set-unknown'
+    run 1: 400 invalid_scope 'Invalid scopes: set-unknown'
+    run 2: 400 invalid_scope 'Invalid scopes: set-unknown'
+[agree] 4 client up-y (grant not enabled there)
+    run 1: 400 invalid_grant 'JWT Authorization Grant is not supported for the requested client'
+    run 2: 400 invalid_grant 'JWT Authorization Grant is not supported for the requested client'
+[agree] 5a alice disabled
+    run 1: 400 invalid_grant 'User is not enabled'
+    run 2: 400 invalid_grant 'User is not enabled'
+[agree] 5a' alice re-enabled
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+[agree] 5b foreign key, own kid
+    run 1: 400 invalid_grant 'Invalid signature'
+    run 2: 400 invalid_grant 'Invalid signature'
+[agree] 5b' foreign key, spoofed kid of key A
+    run 1: 400 invalid_grant 'Invalid signature'
+    run 2: 400 invalid_grant 'Invalid signature'
+[agree] 5c expired assertion (exp = now - 5)
+    run 1: 400 invalid_grant 'Token is not active'
+    run 2: 400 invalid_grant 'Token is not active'
+[agree] 5d assertion lifetime above the IdP maximum (exp = now + 3600)
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+[agree] 5e same assertion twice
+    run 1: first=200 second=400 invalid_grant 'Token reuse detected'
+    run 2: first=200 second=400 invalid_grant 'Token reuse detected'
+[agree] 5f wrong issuer
+    run 1: 400 invalid_grant 'No Identity Provider for provided issuer'
+    run 2: 400 invalid_grant 'No Identity Provider for provided issuer'
+[agree] 6 access.token.lifespan=60
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=60 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=60 refresh_token=absent
+[agree] 6 access.token.lifespan=300
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=['r-memory'] scope='set-memory profile' exp-iat=300 refresh_token=absent
+[agree] 7a JWKS {A, A2} at once: new key A2
+    run 1: 400 invalid_grant 'Invalid signature'
+    run 2: 400 invalid_grant 'Invalid signature'
+    (waiting 15s)
+    [jwks fetch #2 at +23.0s, serving ['proxy-2026-a', 'proxy-2026-b']]
+[agree] 7b JWKS {A, A2} after 15s: new key A2
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+[agree] 7c JWKS {A, A2}: old key A
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    (A removed from the JWKS; waiting 15s)
+[agree] 7d JWKS {A2} after 15s: removed key A
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    [jwks fetch #3 at +38.2s, serving ['proxy-2026-b']]
+[agree] 7e JWKS {A2} after clear-keys-cache: removed key A
+    run 1: 400 invalid_grant 'Invalid signature'
+    run 2: 400 invalid_grant 'Invalid signature'
+[agree] 7f JWKS {A2} after clear-keys-cache: key A2
+    run 1: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+    run 2: 200 sub=329ef344-9205-4022-9e93-7d7c14fada64 azp=up-x aud=https://res-x.example.test roles=[] scope='profile' exp-iat=300 refresh_token=absent
+[agree] 8a alice (member of tenant-a), no scope
+    run 1: 200 organization=['tenant-a'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+    run 2: 200 organization=['tenant-a'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+[agree] 8b alice, scope='organization:tenant-b' (not a member)
+    run 1: 200 organization=None sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'preferred_username', 'scope', 'sub', 'typ']
+    run 2: 200 organization=None sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'preferred_username', 'scope', 'sub', 'typ']
+[agree] 8c bob (member of tenant-b), no scope
+    run 1: 200 organization=['tenant-b'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+    run 2: 200 organization=['tenant-b'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+[agree] 8d alice member of tenant-a and tenant-b, no scope
+    run 1: 200 organization=None sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'preferred_username', 'scope', 'sub', 'typ']
+    run 2: 200 organization=None sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'preferred_username', 'scope', 'sub', 'typ']
+[agree] 8e alice member of both, scope='organization:tenant-a'
+    run 1: 200 organization=['tenant-a'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+    run 2: 200 organization=['tenant-a'] sid=absent typ=Bearer claims=['aud', 'azp', 'exp', 'family_name', 'given_name', 'iat', 'iss', 'jti', 'name', 'organization', 'preferred_username', 'scope', 'sub', 'typ']
+[agree] 8f client up-y without the organization scope, scope='organization:tenant-a'
+    run 1: 400 invalid_scope 'Invalid scopes: organization:tenant-a'
+    run 2: 400 invalid_scope 'Invalid scopes: organization:tenant-a'
+JWKS fetches by Keycloak: 3
