@@ -60,14 +60,90 @@ Work outward, one layer at a time, and stop at the first surprise.
 A client that lists tools has completed steps 1 to 3. Only step 4 shows the
 chain actually carries.
 
+## Personal access tokens (optional)
+
+Off unless `PAT_DATABASE_URL` is set. Everything below was measured against
+Keycloak 26.7.4 (`measurements/jwt-authorization-grant/`); another provider
+needs the equivalent of each item.
+
+### In the identity provider
+
+1. **An identity provider of type "JWT Authorization Grant"** (alias as in
+   `PAT_IDP_ALIAS`): issuer = `PAT_ASSERTION_ISSUER` (default
+   `PROXY_PUBLIC_URL`), *Use JWKS URL* on, JWKS URL =
+   `<PROXY_PUBLIC_URL>/pat/jwks.json`, *JWT Authorization Grant* on, assertion
+   signature algorithm `RS256`, allowed clock skew a few seconds (with the
+   default `0`, an assertion issued a fraction of a second ahead of the
+   provider's clock is refused). The provider must reach the JWKS URL.
+2. **A confidential client per resource** (`RESOURCE_n_PAT_CLIENT_ID`):
+   capability *JWT Authorization Grant* on, this identity provider in its
+   allowed list, *Full scope allowed* off, the audience mapper(s) the resource
+   expects, and the access-token lifespan the short token should have (5 minutes
+   is the intended default; the proxy sets nothing on top). The grant refuses
+   public clients, so a resource whose interactive client is public needs this
+   second client.
+3. **A client scope per permission set**, with role scope mappings for the
+   roles the set carries, attached to the client in step 2 as *optional*. List
+   them in `PAT_SCOPES`. The roles of an issued token are exactly those of the
+   requested scopes; a scope whose roles the owner does not hold is withheld.
+4. **With organizations:** attach the `organization` client scope to the
+   client in step 2 as optional. A token bound to a tenant requests
+   `organization:<alias>`; without the scope on the client the exchange fails
+   with `invalid_scope` rather than issuing an unbound token.
+5. **An admin client** (`PAT_ADMIN_CLIENT_ID`): confidential, service account
+   with `realm-management` → `manage-users` (needed to link an owner to the
+   identity provider; `view-users` is not enough), and the client attribute
+   `allow.token.introspection.without.audience.check=true` (an owner's token is
+   audienced for its resource, and the provider otherwise answers the proxy's
+   introspection with `active: false`).
+
+### In the database
+
+Two roles: one that owns the schema and runs the migrations, one the proxy
+runs as. For example, as a superuser:
+
+```sql
+CREATE ROLE cimd_proxy_migrator LOGIN PASSWORD '…';
+CREATE ROLE cimd_proxy_app LOGIN PASSWORD '…';
+GRANT CONNECT, CREATE ON DATABASE app TO cimd_proxy_migrator;
+GRANT CONNECT ON DATABASE app TO cimd_proxy_app;
+```
+
+Then, before the first start and after every upgrade:
+
+```bash
+docker compose run --rm -e PAT_MIGRATION_DATABASE_URL=… -e PAT_DATABASE_APP_ROLE=cimd_proxy_app \
+  cimd-proxy migrate
+```
+
+The migrations grant the application role `SELECT` and `INSERT` on the token
+table and `UPDATE` on two columns (`last_used_at`, `revoked_at`); no delete, no
+DDL. The proxy refuses to start while the schema is behind the code.
+
+### Rotating the signing key
+
+1. Add the new key as the next `PAT_SIGNING_KEY_n_*` entry and restart. Both
+   keys are now published; the old one still signs.
+2. Set `PAT_SIGNING_KID` to the new key and restart. The provider fetches an
+   unknown key id only when its last fetch is about ten seconds old, so the
+   first exchanges after the switch can be refused for that long.
+3. Remove the old key and restart, then **clear the provider's key cache**
+   (Keycloak: *Realm settings → Keys → Clear keys cache*, or
+   `POST /admin/realms/<realm>/clear-keys-cache`). The provider keeps accepting
+   a key it has cached until it reloads; the clear is what ends the old key.
+
 ## Rollback before forward
 
 Pin the image to a tag, never `latest`, and note the tag currently running
-before changing it. The proxy holds no state beyond its configuration, so a
-rollback is a tag change and a restart — with one exception: changing
-`PROXY_SECRET_KEY` invalidates every refresh token already issued, and every
-connected client has to authorize again. Treat that value as permanent for the
-life of a deployment.
+before changing it. Without personal access tokens the proxy holds no state
+beyond its configuration, so a rollback is a tag change and a restart — with
+one exception: changing `PROXY_SECRET_KEY` invalidates every refresh token
+already issued, and every connected client has to authorize again. Treat that
+value as permanent for the life of a deployment.
+
+With personal access tokens the database is state. Migrations only add, and
+the proxy refuses to start only against a schema *older* than itself, so an
+image rollback runs against the newer schema without a database rollback.
 
 ## Operating notes
 

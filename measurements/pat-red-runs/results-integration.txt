@@ -1,0 +1,6 @@
+db-owner   RED              E   assert not True
+db-grant   RED              E   assert not True
+kc-set     RED              E   AssertionError: assert 'dispatch-executor' not in ['dispatch-executor', 'r-memory']
+kc-trial   RED              E   AssertionError: {"token":"kmb_pat_<redacted>","id":"5a06bdf2-ca7c-4926-90e2-f4a94875d801","name":"agent-e73
+kc-sid     RED              E   assert 200 == 403
+kc-tenant  RED              E   KeyError: 'organization'

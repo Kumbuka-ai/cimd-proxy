@@ -4,6 +4,11 @@ services:
     restart: unless-stopped
     env_file:
       - deploy.env
+    # With personal access tokens: mount the signing key(s) read-only and point
+    # PAT_SIGNING_KEY_n_FILE at them; run `python -m cimd_proxy migrate` once
+    # (and after every upgrade) before starting the service.
+    #volumes:
+    #  - ./secrets/pat-2026-10.pem:/run/secrets/pat-2026-10.pem:ro
     # Bound to loopback only: the reverse proxy reaches the container on the
     # shared network, so nothing needs to be published on a public interface.
     ports:

@@ -11,14 +11,26 @@ ends the table, and a set higher index over a gap is a loud startup error.
 ``RESOURCE_n_ISSUER`` is redundant today (both resources share the same realm),
 but a resource on a different realm or another provider then becomes a table
 entry, not a structural break.
+
+Personal access tokens are an optional block, switched on by
+``PAT_DATABASE_URL``. Without it the proxy runs exactly as before and no
+``PAT_*`` key may be set; with it every required ``PAT_*`` value is checked at
+start like everything else. ``RESOURCE_n_PAT_CLIENT_ID`` / ``_SECRET`` name the
+confidential upstream client the exchange uses for a resource: the JWT
+Authorization Grant refuses public clients, and a resource's interactive client
+is often public.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+
+from .assertion import AssertionSigner, SigningKey, SigningKeyError
 
 
 class ConfigError(RuntimeError):
@@ -31,10 +43,28 @@ class ResourceEntry:
     issuer: str
     client_id: str
     client_secret: str  # empty for public clients
+    pat_client_id: str = ""  # empty: personal access tokens cannot name this resource
+    pat_client_secret: str = ""
 
     @property
     def is_public(self) -> bool:
         return not self.client_secret
+
+    @property
+    def accepts_pat(self) -> bool:
+        return bool(self.pat_client_id)
+
+
+@dataclass(frozen=True, slots=True)
+class PatConfig:
+    database_url: str
+    database_schema: str
+    realm_issuer: str
+    idp_alias: str
+    admin_client_id: str
+    admin_client_secret: str
+    scopes: tuple[str, ...]
+    signer: AssertionSigner
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +83,7 @@ class ProxyConfig:
     scopes_supported: tuple[str, ...] = ()
     default_scope: str = ""
     resources: tuple[ResourceEntry, ...] = field(default_factory=tuple)
+    pat: PatConfig | None = None
 
     def resource_by_url(self, url: str) -> ResourceEntry | None:
         target = _normalise_requested_url(url)
@@ -127,6 +158,8 @@ def load_config(env: Mapping[str, str] | None = None) -> ProxyConfig:
             f"DEFAULT_RESOURCE {default_resource!r} is not present in the RESOURCE_n table"
         )
 
+    pat = _load_pat(src, public_url, resources)
+
     return ProxyConfig(
         public_url=public_url,
         secret_key=secret_key,
@@ -142,7 +175,93 @@ def load_config(env: Mapping[str, str] | None = None) -> ProxyConfig:
         scopes_supported=scopes_supported,
         default_scope=default_scope,
         resources=tuple(resources),
+        pat=pat,
     )
+
+
+_SCHEMA_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+
+
+def _load_pat(
+    env: Mapping[str, str], public_url: str, resources: list[ResourceEntry]
+) -> PatConfig | None:
+    database_url = env.get("PAT_DATABASE_URL", "").strip()
+    if not database_url:
+        stray = sorted(
+            k for k in env if (k.startswith("PAT_") or "_PAT_CLIENT_" in k) and env[k].strip()
+        )
+        if stray:
+            raise ConfigError(
+                f"{', '.join(stray)} set but PAT_DATABASE_URL is not; "
+                "personal access tokens are either fully configured or off"
+            )
+        return None
+
+    schema = env.get("PAT_DATABASE_SCHEMA", "cimd_proxy").strip()
+    if not _SCHEMA_NAME.match(schema):
+        raise ConfigError(f"PAT_DATABASE_SCHEMA {schema!r} is not a plain lower-case identifier")
+    realm_issuer = _required(env, "PAT_REALM_ISSUER").rstrip("/")
+    scopes = _parse_scope_list(_required(env, "PAT_SCOPES"))
+
+    pat_resources = [r for r in resources if r.accepts_pat]
+    if not pat_resources:
+        raise ConfigError(
+            "PAT_DATABASE_URL is set but no RESOURCE_n_PAT_CLIENT_ID is; "
+            "a personal access token could not name any resource"
+        )
+    for entry in pat_resources:
+        if entry.issuer != realm_issuer:
+            raise ConfigError(
+                f"resource {entry.url!r} accepts personal access tokens but its issuer "
+                f"{entry.issuer!r} is not PAT_REALM_ISSUER {realm_issuer!r}"
+            )
+
+    return PatConfig(
+        database_url=database_url,
+        database_schema=schema,
+        realm_issuer=realm_issuer,
+        idp_alias=_required(env, "PAT_IDP_ALIAS"),
+        admin_client_id=_required(env, "PAT_ADMIN_CLIENT_ID"),
+        admin_client_secret=_required(env, "PAT_ADMIN_CLIENT_SECRET"),
+        scopes=scopes,
+        signer=_load_signer(env, public_url),
+    )
+
+
+def _load_signer(env: Mapping[str, str], public_url: str) -> AssertionSigner:
+    """Read the indexed ``PAT_SIGNING_KEY_n_KID`` / ``_FILE`` table, contiguous from 0."""
+
+    keys: list[SigningKey] = []
+    index = 0
+    while f"PAT_SIGNING_KEY_{index}_KID" in env or f"PAT_SIGNING_KEY_{index}_FILE" in env:
+        kid = _required(env, f"PAT_SIGNING_KEY_{index}_KID")
+        path = Path(_required(env, f"PAT_SIGNING_KEY_{index}_FILE"))
+        try:
+            pem = path.read_bytes()
+        except OSError as exc:
+            raise ConfigError(f"PAT_SIGNING_KEY_{index}_FILE cannot be read: {exc}") from exc
+        try:
+            keys.append(SigningKey.from_pem(kid, pem))
+        except SigningKeyError as exc:
+            raise ConfigError(str(exc)) from exc
+        index += 1
+    higher = sorted(
+        k for k in env if re.match(r"^PAT_SIGNING_KEY_\d+_", k) and int(k.split("_")[3]) >= index
+    )
+    if higher:
+        raise ConfigError(f"PAT_SIGNING_KEY table has a gap at index {index}: {', '.join(higher)}")
+    if not keys:
+        raise ConfigError("PAT_SIGNING_KEY_0_KID and PAT_SIGNING_KEY_0_FILE are required")
+    if len({k.kid for k in keys}) != len(keys):
+        raise ConfigError("PAT_SIGNING_KEY_n_KID values must be unique")
+
+    issuer = env.get("PAT_ASSERTION_ISSUER", "").strip() or public_url
+    try:
+        return AssertionSigner(
+            issuer=issuer, keys=tuple(keys), active_kid=_required(env, "PAT_SIGNING_KID")
+        )
+    except SigningKeyError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def _parse_scope_list(raw: str) -> tuple[str, ...]:
@@ -192,6 +311,7 @@ def _load_resources(env: Mapping[str, str]) -> list[ResourceEntry]:
         issuer = _required(env, f"{prefix}ISSUER").rstrip("/")
         client_id = _required(env, f"{prefix}CLIENT_ID")
         client_secret = env.get(f"{prefix}CLIENT_SECRET", "")
+        pat_client_id, pat_client_secret = _pat_client(env, prefix)
         # A double-slash-only URL is not a valid resource identifier.
         if "://" not in url:
             raise ConfigError(f"{prefix}URL {url!r} is not a URL")
@@ -203,10 +323,23 @@ def _load_resources(env: Mapping[str, str]) -> list[ResourceEntry]:
                 issuer=issuer,
                 client_id=client_id,
                 client_secret=client_secret,
+                pat_client_id=pat_client_id,
+                pat_client_secret=pat_client_secret,
             )
         )
         index += 1
     return entries
+
+
+def _pat_client(env: Mapping[str, str], prefix: str) -> tuple[str, str]:
+    client_id = env.get(f"{prefix}PAT_CLIENT_ID", "").strip()
+    client_secret = env.get(f"{prefix}PAT_CLIENT_SECRET", "").strip()
+    if bool(client_id) != bool(client_secret):
+        raise ConfigError(
+            f"{prefix}PAT_CLIENT_ID and {prefix}PAT_CLIENT_SECRET are set together or not at "
+            "all; the JWT Authorization Grant needs a confidential client"
+        )
+    return client_id, client_secret
 
 
 def _required(env: Mapping[str, str], name: str) -> str:

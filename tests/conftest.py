@@ -67,3 +67,63 @@ def app(app_factory: Callable[..., object]) -> object:
 @pytest.fixture
 def client(app: object) -> TestClient:
     return TestClient(app)  # type: ignore[arg-type]
+
+
+# --- personal access tokens ----------------------------------------------
+
+
+@pytest.fixture
+def pat_key_file(tmp_path):
+    from .pat_fakes import write_rsa_key
+
+    path = tmp_path / "pat-signing-a.pem"
+    write_rsa_key(path)
+    return path
+
+
+@pytest.fixture
+def pat_env(base_env: dict[str, str], pat_key_file) -> dict[str, str]:
+    from .pat_fakes import REALM
+
+    env = dict(base_env)
+    env.update(
+        {
+            "RESOURCE_0_PAT_CLIENT_ID": "log-mcp-pat",
+            "RESOURCE_0_PAT_CLIENT_SECRET": "pat-client-secret",
+            "RESOURCE_1_URL": "https://wlm.example",
+            "RESOURCE_1_ISSUER": REALM,
+            "RESOURCE_1_CLIENT_ID": "wlm-mcp",
+            "RESOURCE_1_PAT_CLIENT_ID": "wlm-mcp-pat",
+            "RESOURCE_1_PAT_CLIENT_SECRET": "pat-client-secret-y",
+            "RESOURCE_2_URL": "https://interactive-only.example",
+            "RESOURCE_2_ISSUER": REALM,
+            "RESOURCE_2_CLIENT_ID": "interactive-mcp",
+            "PAT_DATABASE_URL": "postgresql://unused.invalid/db",
+            "PAT_REALM_ISSUER": REALM,
+            "PAT_IDP_ALIAS": "cimd-proxy-pat",
+            "PAT_ADMIN_CLIENT_ID": "cimd-proxy-admin",
+            "PAT_ADMIN_CLIENT_SECRET": "admin-secret",
+            "PAT_SCOPES": "set-memory set-dispatch",
+            "PAT_SIGNING_KEY_0_KID": "key-a",
+            "PAT_SIGNING_KEY_0_FILE": str(pat_key_file),
+            "PAT_SIGNING_KID": "key-a",
+        }
+    )
+    return env
+
+
+@pytest.fixture
+def pat_app_factory(pat_env: dict[str, str]):
+    """Build a PAT-enabled app over an in-memory store and a fake Keycloak."""
+
+    from .pat_fakes import FakeKeycloak, InMemoryPatStore
+
+    def _factory(**overrides: str):
+        env = dict(pat_env)
+        env.update(overrides)
+        store = InMemoryPatStore()
+        keycloak = FakeKeycloak()
+        app = create_app(load_config(env), pat_store=store, keycloak=keycloak)  # type: ignore[arg-type]
+        return app, store, keycloak
+
+    return _factory

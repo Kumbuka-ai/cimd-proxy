@@ -30,6 +30,9 @@ _SECRET_FIELDS = frozenset(
         "upstream_refresh_token",
         "upstream_code",
         "upstream_verifier",
+        "subject_token",
+        "assertion",
+        "token",
     }
 )
 

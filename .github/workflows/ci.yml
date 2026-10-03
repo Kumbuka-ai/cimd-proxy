@@ -36,7 +36,13 @@ jobs:
       - name: Ruff — format check
         run: python -m ruff format --check src tests
 
+      # The integration tests start PostgreSQL and Keycloak containers. Locally
+      # they skip without Docker; here a missing Docker fails the run, because
+      # the database grants and the upstream-enforced gates are measured nowhere
+      # else.
       - name: Pytest with coverage
+        env:
+          CIMD_PROXY_REQUIRE_INTEGRATION: "1"
         run: |
           python -m pytest \
             --cov=src/cimd_proxy \

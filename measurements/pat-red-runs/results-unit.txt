@@ -1,0 +1,9 @@
+revoked    RED              E   assert (200 == 400)
+expired    RED              E   assert (200 == 400)
+checksum   RED              E   AssertionError: assert ['find_by_hash'] == []
+resource   RED              E   assert (200 == 400)
+tenant     RED              E   AssertionError: assert 'organization:tenant-a' in ['set-memory']
+realm      RED              E   AssertionError: assert 'invalid_target' == 'invalid_grant'
+refresh    RED              E   AssertionError: assert 'refresh_token' not in {'access_token': 'short', 'token_type': 'Bearer', 'expires_in': 300, 'refresh_token': 'upstream-refr
+set        RED              E   assert 201 == 403
+secret     RED              E   assert False

@@ -1,0 +1,153 @@
+{
+  "realm": "jag",
+  "enabled": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "r-memory"
+      },
+      {
+        "name": "dispatch-executor"
+      },
+      {
+        "name": "r-admin"
+      }
+    ]
+  },
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.test",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Probe",
+      "realmRoles": [
+        "r-memory",
+        "dispatch-executor",
+        "r-admin",
+        "default-roles-jag"
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Probe",
+      "realmRoles": [
+        "r-memory",
+        "default-roles-jag"
+      ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.test",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Probe",
+      "realmRoles": [
+        "r-memory",
+        "dispatch-executor",
+        "default-roles-jag"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "up-x",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "measurement-only-up-x",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "oauth2.jwt.authorization.grant.enabled": "true",
+        "oauth2.jwt.authorization.grant.idp": "pat-issuer",
+        "access.token.lifespan": "300"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ],
+      "protocolMappers": [
+        {
+          "name": "aud-res-x",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "https://res-x.example.test",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "up-y",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "measurement-only-up-y",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "access.token.lifespan": "300"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "profile"
+      ],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "aud-res-y",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "https://res-y.example.test",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "proxy-admin",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "measurement-only-proxy-admin",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": true
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "pat-issuer",
+      "providerId": "jwt-authorization-grant",
+      "enabled": true,
+      "config": {
+        "issuer": "https://proxy.example.test",
+        "jwtAuthorizationGrantEnabled": "true",
+        "useJwksUrl": "true",
+        "jwksUrl": "JWKS_URL_PLACEHOLDER",
+        "jwtAuthorizationGrantAssertionSignatureAlg": "RS256",
+        "jwtAuthorizationGrantMaxAllowedAssertionExpiration": "60",
+        "jwtAuthorizationGrantAllowedClockSkew": "5",
+        "jwtAuthorizationGrantAssertionReuseAllowed": "false"
+      }
+    }
+  ]
+}

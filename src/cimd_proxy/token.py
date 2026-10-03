@@ -1,13 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Johannes Bayer-Albert
 # SPDX-License-Identifier: Apache-2.0
 
-"""POST /token — authorization_code and refresh_token grants.
+"""POST /token — authorization_code, refresh_token and, when configured, token exchange.
 
-The load-bearing rule stays in force: the proxy never parses the access token.
-The upstream token response is returned unchanged, except that
-``refresh_token`` is replaced by a Fernet envelope carrying the upstream
-refresh token plus the resource identifier — that is the reason no database is
-required: the proxy learns from the token itself which upstream to talk to.
+On the interactive grants the proxy never parses the access token. The upstream
+token response is returned unchanged, except that ``refresh_token`` is replaced
+by a Fernet envelope carrying the upstream refresh token plus the resource
+identifier — so the interactive path keeps no server-side state: the proxy
+learns from the token itself which upstream to talk to.
+
+The token-exchange grant (RFC 8693) takes a personal access token as
+``subject_token`` and is handled in :mod:`cimd_proxy.pat`.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from .correlation import bind_correlation_id
 from .envelope import EnvelopeCodec, EnvelopeError, RefreshEnvelope
 from .errors import InvalidGrant, InvalidRequest, OAuthError, ServerError
 from .logging_setup import get_logger
+from .pat import TOKEN_EXCHANGE, PatService
 from .pkce import verify_challenge
 from .upstream import token_url
 
@@ -31,8 +35,12 @@ _LOG = get_logger("cimd_proxy.token")
 router = APIRouter()
 
 
-def _deps(request: Request) -> tuple[ProxyConfig, EnvelopeCodec]:
-    return request.app.state.config, request.app.state.envelope_codec
+def _deps(request: Request) -> tuple[ProxyConfig, EnvelopeCodec, PatService | None]:
+    return (
+        request.app.state.config,
+        request.app.state.envelope_codec,
+        request.app.state.pat_service,
+    )
 
 
 @router.post("/token")
@@ -45,12 +53,17 @@ async def token(  # noqa: PLR0913 - OAuth token params are what they are
     client_id: Annotated[str | None, Form()] = None,
     refresh_token: Annotated[str | None, Form()] = None,
     scope: Annotated[str | None, Form()] = None,
-    deps: Annotated[tuple[ProxyConfig, EnvelopeCodec], Depends(_deps)] = None,  # type: ignore[assignment]
+    subject_token: Annotated[str | None, Form()] = None,
+    subject_token_type: Annotated[str | None, Form()] = None,
+    requested_token_type: Annotated[str | None, Form()] = None,
+    resource: Annotated[str | None, Form()] = None,
+    deps: Annotated[tuple[ProxyConfig, EnvelopeCodec, PatService | None], Depends(_deps)] = None,  # type: ignore[assignment]
 ):
-    # The RFC 8707 `resource` form field is accepted (clients still send it)
-    # but the proxy trusts the envelope's `resource` — routing already
-    # happened at /authorize. See §5.4 of the design.
-    config, codec = deps
+    # On the interactive grants the RFC 8707 `resource` form field is accepted
+    # (clients still send it) but the proxy trusts the envelope's `resource` —
+    # routing already happened at /authorize. On the token exchange it selects
+    # which of the personal access token's resources the short token is for.
+    config, codec, pat_service = deps
     try:
         if grant_type == "authorization_code":
             return await _handle_auth_code(
@@ -68,9 +81,20 @@ async def token(  # noqa: PLR0913 - OAuth token params are what they are
                 refresh_token=refresh_token,
                 scope=scope,
             )
-        raise InvalidRequest(
-            f"grant_type must be 'authorization_code' or 'refresh_token', got {grant_type!r}"
-        )
+        if grant_type == TOKEN_EXCHANGE and pat_service is not None:
+            payload = await pat_service.exchange(
+                subject_token=subject_token,
+                subject_token_type=subject_token_type,
+                requested_token_type=requested_token_type,
+                resource=resource,
+            )
+            return JSONResponse(
+                status_code=200, content=payload, headers={"Cache-Control": "no-store"}
+            )
+        allowed = "'authorization_code' or 'refresh_token'"
+        if pat_service is not None:
+            allowed = f"'authorization_code', 'refresh_token' or '{TOKEN_EXCHANGE}'"
+        raise InvalidRequest(f"grant_type must be {allowed}, got {grant_type!r}")
     except OAuthError as exc:
         safe_grant = (
             (grant_type or "").replace("\r", "\\r").replace("\n", "\\n").replace("\x00", "\\0")
