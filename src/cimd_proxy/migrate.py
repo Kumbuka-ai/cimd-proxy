@@ -11,7 +11,10 @@ refuses to start while the schema is behind the code (see
 
 Migrations are the files ``migrations/V<n>__<name>.sql``, applied in order, each
 in its own transaction, under an advisory lock so two runners cannot interleave.
-An applied migration is never edited: a change is a new file.
+An applied migration is never edited: a change is a new file, and it only adds
+(nullable or defaulted columns, new tables, new grants), so the previous image
+still runs against the new schema and an image rollback needs no database
+rollback.
 """
 
 from __future__ import annotations

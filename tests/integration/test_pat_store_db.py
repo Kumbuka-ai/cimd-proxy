@@ -163,6 +163,30 @@ async def test_schema_behind_the_code_refuses_to_start(database: Database) -> No
         await store.close()
 
 
+async def test_schema_ahead_of_the_code_is_accepted(database: Database) -> None:
+    """An image rolled back to an older version starts against its successor's schema."""
+
+    with psycopg.connect(database.admin_dsn, autocommit=True) as conn:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS cimd_proxy_ahead")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cimd_proxy_ahead.schema_history "
+            "(version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+        )
+        conn.execute(
+            "INSERT INTO cimd_proxy_ahead.schema_history (version) VALUES (%s) "
+            "ON CONFLICT DO NOTHING",
+            (latest_version() + 1,),
+        )
+        conn.execute("GRANT USAGE ON SCHEMA cimd_proxy_ahead TO cimd_app")
+        conn.execute("GRANT SELECT ON cimd_proxy_ahead.schema_history TO cimd_app")
+    store = PostgresPatStore(database.app_dsn, "cimd_proxy_ahead")
+    await store.open()
+    try:
+        await store.check_schema()
+    finally:
+        await store.close()
+
+
 async def test_token_value_is_not_in_a_database_dump(
     store: PostgresPatStore, database: Database
 ) -> None:

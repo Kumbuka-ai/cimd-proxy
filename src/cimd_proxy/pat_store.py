@@ -130,7 +130,9 @@ class PostgresPatStore:
         except (errors.UndefinedTable, errors.InvalidSchemaName):
             row = None
         current = row[0] if row else 0
-        if current != latest_version():
+        # Behind is refused; ahead is fine. Migrations only add, so an image that
+        # was rolled back keeps working against the schema of its successor.
+        if current < latest_version():
             raise SchemaBehind(
                 f"database schema is at version {current}, this code needs {latest_version()}; "
                 "run `python -m cimd_proxy migrate`"

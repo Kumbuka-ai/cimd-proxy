@@ -6,7 +6,7 @@
 Wires configuration, the CIMD service (fetcher + cache + policy), the envelope
 codec and the routers into a ready-to-serve ASGI app. When personal access
 tokens are configured, the token store is opened at startup and the app refuses
-to start while the database schema is behind the code.
+to start while the database schema is behind the code (a newer schema is fine).
 """
 
 from __future__ import annotations
