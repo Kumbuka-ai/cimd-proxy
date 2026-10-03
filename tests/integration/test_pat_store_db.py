@@ -59,13 +59,15 @@ async def test_round_trip_under_the_application_role(store: PostgresPatStore) ->
     assert (found.id, found.owner_sub, found.tenant) == (record.id, "alice", "tenant-a")
     assert found.resources == ("https://res-x.example",)
     assert found.scopes == ("set-memory",)
-    assert found.revoked_at is None and found.last_used_at is None
+    assert found.revoked_at is None
+    assert found.last_used_at is None
     assert await store.find_by_hash(token_hash(generate())) is None
 
     used = datetime.now(UTC)
     await store.touch(record.id, used)
     found = await store.find_by_hash(token_hash(token))
-    assert found is not None and found.last_used_at is not None
+    assert found is not None
+    assert found.last_used_at is not None
     assert abs((found.last_used_at - used).total_seconds()) < 1
 
 

@@ -22,13 +22,14 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from importlib import resources
+from pathlib import Path
 
 import psycopg
 from psycopg import sql
 
 from .config import ConfigError
 
+_DIRECTORY = Path(__file__).with_name("migrations")
 _FILE = re.compile(r"^V(\d+)__[a-z0-9_]+\.sql$")
 _LOCK_KEY = 0x63696D64  # "cimd"
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
@@ -36,7 +37,7 @@ _IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 def migrations() -> list[tuple[int, str]]:
     found = []
-    for entry in resources.files("cimd_proxy.migrations").iterdir():
+    for entry in _DIRECTORY.iterdir():
         match = _FILE.match(entry.name)
         if match:
             found.append((int(match.group(1)), entry.read_text(encoding="utf-8")))
@@ -58,35 +59,33 @@ def migrate(dsn: str, schema: str, app_role: str) -> list[int]:
         if not _IDENT.match(value):
             raise ConfigError(f"{name} {value!r} is not a plain lower-case identifier")
     params = {"schema": sql.Identifier(schema), "app_role": sql.Identifier(app_role)}
+
+    def _statement(template: str) -> sql.Composed:
+        return sql.SQL(template).format(**params)  # type: ignore[arg-type]
+
     applied: list[int] = []
     with psycopg.connect(dsn, autocommit=True) as conn:
         conn.execute("SELECT pg_advisory_lock(%s)", (_LOCK_KEY,))
         try:
-            conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(**params))
+            conn.execute(_statement("CREATE SCHEMA IF NOT EXISTS {schema}"))
             conn.execute(
-                sql.SQL(
+                _statement(
                     "CREATE TABLE IF NOT EXISTS {schema}.schema_history ("
                     " version integer PRIMARY KEY,"
                     " applied_at timestamptz NOT NULL DEFAULT now())"
-                ).format(**params)
+                )
             )
             row = conn.execute(
-                sql.SQL("SELECT coalesce(max(version), 0) FROM {schema}.schema_history").format(
-                    **params
-                )
+                _statement("SELECT coalesce(max(version), 0) FROM {schema}.schema_history")
             ).fetchone()
             current = row[0] if row else 0
+            record = _statement("INSERT INTO {schema}.schema_history (version) VALUES (%s)")
             for version, text in migrations():
                 if version <= current:
                     continue
                 with conn.transaction():
-                    conn.execute(sql.SQL(text).format(**params))  # type: ignore[arg-type]
-                    conn.execute(
-                        sql.SQL("INSERT INTO {schema}.schema_history (version) VALUES (%s)").format(
-                            **params
-                        ),
-                        (version,),
-                    )
+                    conn.execute(_statement(text))
+                    conn.execute(record, (version,))
                 applied.append(version)
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (_LOCK_KEY,))

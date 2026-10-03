@@ -35,7 +35,8 @@ def test_full_configuration_loads(pat_env: dict[str, str]) -> None:
 
 def test_assertion_issuer_can_be_set(pat_env: dict[str, str]) -> None:
     cfg = load_config(dict(pat_env, PAT_ASSERTION_ISSUER="https://other.example"))
-    assert cfg.pat is not None and cfg.pat.signer.issuer == "https://other.example"
+    assert cfg.pat is not None
+    assert cfg.pat.signer.issuer == "https://other.example"
 
 
 @pytest.mark.parametrize(

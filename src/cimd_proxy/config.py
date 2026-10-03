@@ -311,13 +311,7 @@ def _load_resources(env: Mapping[str, str]) -> list[ResourceEntry]:
         issuer = _required(env, f"{prefix}ISSUER").rstrip("/")
         client_id = _required(env, f"{prefix}CLIENT_ID")
         client_secret = env.get(f"{prefix}CLIENT_SECRET", "")
-        pat_client_id = env.get(f"{prefix}PAT_CLIENT_ID", "").strip()
-        pat_client_secret = env.get(f"{prefix}PAT_CLIENT_SECRET", "").strip()
-        if bool(pat_client_id) != bool(pat_client_secret):
-            raise ConfigError(
-                f"{prefix}PAT_CLIENT_ID and {prefix}PAT_CLIENT_SECRET are set together or not at "
-                "all; the JWT Authorization Grant needs a confidential client"
-            )
+        pat_client_id, pat_client_secret = _pat_client(env, prefix)
         # A double-slash-only URL is not a valid resource identifier.
         if "://" not in url:
             raise ConfigError(f"{prefix}URL {url!r} is not a URL")
@@ -335,6 +329,17 @@ def _load_resources(env: Mapping[str, str]) -> list[ResourceEntry]:
         )
         index += 1
     return entries
+
+
+def _pat_client(env: Mapping[str, str], prefix: str) -> tuple[str, str]:
+    client_id = env.get(f"{prefix}PAT_CLIENT_ID", "").strip()
+    client_secret = env.get(f"{prefix}PAT_CLIENT_SECRET", "").strip()
+    if bool(client_id) != bool(client_secret):
+        raise ConfigError(
+            f"{prefix}PAT_CLIENT_ID and {prefix}PAT_CLIENT_SECRET are set together or not at "
+            "all; the JWT Authorization Grant needs a confidential client"
+        )
+    return client_id, client_secret
 
 
 def _required(env: Mapping[str, str], name: str) -> str:

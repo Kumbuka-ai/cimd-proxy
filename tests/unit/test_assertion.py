@@ -90,10 +90,11 @@ def test_unknown_active_kid_is_refused(rsa_key) -> None:
 
 
 def test_non_rsa_short_and_garbage_keys_are_refused() -> None:
+    ec_pem = _pem(ec.generate_private_key(ec.SECP256R1()))
     with pytest.raises(SigningKeyError, match="not an RSA key"):
-        SigningKey.from_pem("ec", _pem(ec.generate_private_key(ec.SECP256R1())))
-    short = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+        SigningKey.from_pem("ec", ec_pem)
+    short_pem = _pem(rsa.generate_private_key(public_exponent=65537, key_size=1024))
     with pytest.raises(SigningKeyError, match="shorter than 2048"):
-        SigningKey.from_pem("short", _pem(short))
+        SigningKey.from_pem("short", short_pem)
     with pytest.raises(SigningKeyError, match="unencrypted PEM"):
         SigningKey.from_pem("junk", b"not a key")

@@ -107,10 +107,39 @@ def _record(row: dict) -> PatRecord:
 
 
 class PostgresPatStore:
+    """The store over a connection pool; every statement is composed once, here.
+
+    Identifiers (schema, table, columns) are composed with ``psycopg.sql``;
+    every value travels as a bound parameter.
+    """
+
     def __init__(self, dsn: str, schema: str) -> None:
-        self._schema = sql.Identifier(schema)
-        self._table = sql.SQL("{}.personal_access_token").format(self._schema)
         self._pool = AsyncConnectionPool(dsn, min_size=1, max_size=5, open=False)
+        names = {
+            "history": sql.SQL("{}.schema_history").format(sql.Identifier(schema)),
+            "table": sql.SQL("{}.personal_access_token").format(sql.Identifier(schema)),
+            "columns": _COLUMNS,
+        }
+
+        def compose(template: str) -> sql.Composed:
+            return sql.SQL(template).format(**names)
+
+        self._q_version = compose("SELECT coalesce(max(version), 0) FROM {history}")
+        self._q_insert = compose(
+            "INSERT INTO {table} (id, tenant, realm_issuer, owner_sub, name, token_hash, "
+            "resources, scopes, created_at, expires_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        )
+        self._q_find = compose("SELECT {columns} FROM {table} WHERE token_hash = %s")
+        self._q_list = compose(
+            "SELECT {columns} FROM {table} WHERE realm_issuer = %s AND owner_sub = %s "
+            "ORDER BY created_at, id"
+        )
+        self._q_revoke = compose(
+            "UPDATE {table} SET revoked_at = now() WHERE id = %s AND realm_issuer = %s "
+            "AND owner_sub = %s AND revoked_at IS NULL"
+        )
+        self._q_touch = compose("UPDATE {table} SET last_used_at = %s WHERE id = %s")
 
     async def open(self) -> None:
         await self._pool.open(wait=True)
@@ -121,11 +150,7 @@ class PostgresPatStore:
     async def check_schema(self) -> None:
         try:
             async with self._pool.connection() as conn:
-                cur = await conn.execute(
-                    sql.SQL("SELECT coalesce(max(version), 0) FROM {}.schema_history").format(
-                        self._schema
-                    )
-                )
+                cur = await conn.execute(self._q_version)
                 row = await cur.fetchone()
         except (errors.UndefinedTable, errors.InvalidSchemaName):
             row = None
@@ -141,11 +166,7 @@ class PostgresPatStore:
     async def insert(self, record: PatRecord, token_hash: bytes) -> None:
         async with self._pool.connection() as conn:
             await conn.execute(
-                sql.SQL(
-                    "INSERT INTO {} (id, tenant, realm_issuer, owner_sub, name, token_hash, "
-                    "resources, scopes, created_at, expires_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                ).format(self._table),
+                self._q_insert,
                 (
                     record.id,
                     record.tenant,
@@ -163,40 +184,22 @@ class PostgresPatStore:
     async def find_by_hash(self, token_hash: bytes) -> PatRecord | None:
         async with self._pool.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
-            await cur.execute(
-                sql.SQL("SELECT {} FROM {} WHERE token_hash = %s").format(_COLUMNS, self._table),
-                (token_hash,),
-            )
+            await cur.execute(self._q_find, (token_hash,))
             row = await cur.fetchone()
         return _record(row) if row else None
 
     async def list_for_owner(self, realm_issuer: str, owner_sub: str) -> list[PatRecord]:
         async with self._pool.connection() as conn:
             cur = conn.cursor(row_factory=dict_row)
-            await cur.execute(
-                sql.SQL(
-                    "SELECT {} FROM {} WHERE realm_issuer = %s AND owner_sub = %s "
-                    "ORDER BY created_at, id"
-                ).format(_COLUMNS, self._table),
-                (realm_issuer, owner_sub),
-            )
+            await cur.execute(self._q_list, (realm_issuer, owner_sub))
             rows = await cur.fetchall()
         return [_record(r) for r in rows]
 
     async def revoke(self, realm_issuer: str, owner_sub: str, token_id: uuid.UUID) -> bool:
         async with self._pool.connection() as conn:
-            cur = await conn.execute(
-                sql.SQL(
-                    "UPDATE {} SET revoked_at = now() WHERE id = %s AND realm_issuer = %s "
-                    "AND owner_sub = %s AND revoked_at IS NULL"
-                ).format(self._table),
-                (token_id, realm_issuer, owner_sub),
-            )
+            cur = await conn.execute(self._q_revoke, (token_id, realm_issuer, owner_sub))
             return cur.rowcount == 1
 
     async def touch(self, token_id: uuid.UUID, used_at: datetime) -> None:
         async with self._pool.connection() as conn:
-            await conn.execute(
-                sql.SQL("UPDATE {} SET last_used_at = %s WHERE id = %s").format(self._table),
-                (used_at, token_id),
-            )
+            await conn.execute(self._q_touch, (used_at, token_id))

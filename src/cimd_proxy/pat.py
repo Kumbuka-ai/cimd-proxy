@@ -143,18 +143,7 @@ class PatService:
             raise ManagementError(
                 400, "invalid_scope", f"scopes not offered for personal tokens: {outside}"
             )
-        days = body.get("expires_in_days", DEFAULT_LIFETIME_DAYS)
-        if isinstance(days, bool) or not isinstance(days, int) or days < 1:
-            raise ManagementError(400, "invalid_request", "expires_in_days must be >= 1")
-        long_ok = body.get("allow_long_lifetime", False)
-        if not isinstance(long_ok, bool):
-            raise ManagementError(400, "invalid_request", "allow_long_lifetime must be a boolean")
-        if days > LONG_LIFETIME_DAYS and not long_ok:
-            raise ManagementError(
-                400,
-                "invalid_request",
-                f"a lifetime above {LONG_LIFETIME_DAYS} days needs allow_long_lifetime: true",
-            )
+        days, long_ok = _lifetime(body)
         organization = body.get("organization")
         if organization is not None and not isinstance(organization, str):
             raise ManagementError(400, "invalid_request", "organization must be a string")
@@ -342,13 +331,13 @@ def _scope_param(scopes: tuple[str, ...], tenant: str) -> str:
 def _organizations(claim: Any) -> tuple[str, ...]:
     """Keycloak renders ``organization`` as a list of aliases or as a map keyed by alias."""
 
-    if isinstance(claim, list):
-        return tuple(str(c) for c in claim)
-    if isinstance(claim, dict):
-        return tuple(str(k) for k in claim)
-    if isinstance(claim, str) and claim:
-        return (claim,)
-    return ()
+    if isinstance(claim, (list, dict)):
+        aliases = [str(c) for c in claim]
+    elif isinstance(claim, str) and claim:
+        aliases = [claim]
+    else:
+        aliases = []
+    return tuple(aliases)
 
 
 def _tenant_for(caller: Caller, requested: str | None) -> str:
@@ -365,6 +354,22 @@ def _tenant_for(caller: Caller, requested: str | None) -> str:
             "the owner belongs to several organizations; name one in 'organization'",
         )
     return caller.organizations[0] if caller.organizations else ""
+
+
+def _lifetime(body: dict[str, Any]) -> tuple[int, bool]:
+    days = body.get("expires_in_days", DEFAULT_LIFETIME_DAYS)
+    if isinstance(days, bool) or not isinstance(days, int) or days < 1:
+        raise ManagementError(400, "invalid_request", "expires_in_days must be >= 1")
+    long_ok = body.get("allow_long_lifetime", False)
+    if not isinstance(long_ok, bool):
+        raise ManagementError(400, "invalid_request", "allow_long_lifetime must be a boolean")
+    if days > LONG_LIFETIME_DAYS and not long_ok:
+        raise ManagementError(
+            400,
+            "invalid_request",
+            f"a lifetime above {LONG_LIFETIME_DAYS} days needs allow_long_lifetime: true",
+        )
+    return days, long_ok
 
 
 def _string_list(value: Any, field: str) -> tuple[str, ...]:

@@ -75,7 +75,8 @@ class TestCreate:
         assert _create(client, expires_in_days=7).status_code == 201
         assert _create(client, expires_in_days=365).status_code == 201
         r = _create(client, expires_in_days=366)
-        assert r.status_code == 400 and "allow_long_lifetime" in r.json()["error_description"]
+        assert r.status_code == 400
+        assert "allow_long_lifetime" in r.json()["error_description"]
         assert _create(client, expires_in_days=800, allow_long_lifetime=True).status_code == 201
 
     @pytest.mark.parametrize(
@@ -147,7 +148,8 @@ class TestTenant:
         headers = {"Authorization": "Bearer dave-session"}
         assert _create(client, headers=headers).status_code == 400
         r = _create(client, headers=headers, organization="tenant-b")
-        assert r.status_code == 201 and r.json()["tenant"] == "tenant-b"
+        assert r.status_code == 201
+        assert r.json()["tenant"] == "tenant-b"
 
     def test_a_foreign_organization_cannot_be_chosen(self, pat) -> None:
         client, _, keycloak = pat
@@ -199,7 +201,8 @@ class TestListAndRevoke:
         _create(client, headers={"Authorization": "Bearer bob-session"}, name="bobs")
         listed = client.get("/pat/tokens", headers=AUTH).json()["tokens"]
         assert [t["name"] for t in listed] == ["mine"]
-        assert "token" not in listed[0] and "token_hash" not in listed[0]
+        assert "token" not in listed[0]
+        assert "token_hash" not in listed[0]
 
     def test_revoke_own_token(self, pat) -> None:
         client, _, _ = pat
@@ -234,7 +237,8 @@ class TestExchange:
         body = r.json()
         assert body["access_token"] == "short"
         assert body["issued_token_type"] == ACCESS_TOKEN_TYPE
-        assert "refresh_token" not in body and "refresh_expires_in" not in body
+        assert "refresh_token" not in body
+        assert "refresh_expires_in" not in body
         assert r.headers["cache-control"] == "no-store"
         grant = keycloak.grants[-1]
         assert (grant.client_id, grant.client_secret) == ("log-mcp-pat", "pat-client-secret")
@@ -256,7 +260,8 @@ class TestExchange:
             "token"
         ]
         r = _exchange(client, token)
-        assert r.status_code == 400 and r.json()["error"] == "invalid_target"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_target"
         r = _exchange(client, token, resource="https://wlm.example")
         assert r.status_code == 200
         assert keycloak.grants[-1].client_id == "wlm-mcp-pat"
@@ -302,7 +307,8 @@ class TestExchange:
 
         client, _, _ = pat
         r = _exchange(client, generate())
-        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
 
     def test_token_from_another_realm_row_is_refused(self, pat) -> None:
         from dataclasses import replace
@@ -334,7 +340,8 @@ class TestDiscoveryAndJwks:
         client, _, _ = pat
         keys = client.get("/pat/jwks.json").json()["keys"]
         assert [k["kid"] for k in keys] == ["key-a"]
-        assert "d" not in keys[0] and "p" not in keys[0]
+        assert "d" not in keys[0]
+        assert "p" not in keys[0]
 
     def test_pat_routes_are_absent_without_configuration(self, client: TestClient) -> None:
         assert client.get("/pat/jwks.json").status_code == 404
@@ -342,7 +349,8 @@ class TestDiscoveryAndJwks:
 
     def test_exchange_grant_is_unknown_without_configuration(self, client: TestClient) -> None:
         r = client.post("/token", data={"grant_type": TOKEN_EXCHANGE, "subject_token": "x"})
-        assert r.status_code == 400 and r.json()["error"] == "invalid_request"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_request"
 
     def test_unknown_grant_names_the_exchange_when_configured(self, pat) -> None:
         client, _, _ = pat

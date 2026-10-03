@@ -15,7 +15,8 @@ def test_migrations_are_numbered_from_one_without_gaps() -> None:
     assert versions == list(range(1, len(versions) + 1))
     assert migrate.latest_version() == len(versions) >= 1
     first = migrate.migrations()[0][1]
-    assert "{schema}" in first and "{app_role}" in first
+    assert "{schema}" in first
+    assert "{app_role}" in first
 
 
 @pytest.mark.parametrize(("schema", "role"), [('x"; drop', "app"), ("ok", "Robert'); --")])

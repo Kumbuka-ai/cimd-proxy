@@ -67,14 +67,16 @@ class TestRP8RevokedAndExpired:
         created = _create(client)
         assert client.delete(f"/pat/tokens/{created['id']}", headers=ALICE).status_code == 204
         r = _exchange(client, created["token"])
-        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
 
     def test_guarded_refuses_expired(self, pat) -> None:
         client, store, _ = pat
         token = _create(client)["token"]
         _set(store, token, expires_at=datetime.now(UTC) - timedelta(seconds=1))
         r = _exchange(client, token)
-        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
 
     def test_bypass_admits_live_token(self, pat) -> None:
         client, _, _ = pat
@@ -94,7 +96,8 @@ class TestRP8ChecksumWithoutDatabase:
         store.calls.clear()
         mistyped = token[:-1] + ("A" if token[-1] != "A" else "B")
         r = _exchange(client, mistyped)
-        assert r.status_code == 400 and r.json()["error"] == "invalid_grant"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
         assert store.calls == []
 
     def test_bypass_asks_the_store_for_a_well_formed_token(self, pat) -> None:
@@ -121,7 +124,8 @@ class TestRP8ResourceBinding:
         token = _create(client, resources=["https://log.example"])["token"]
         grants_before = len(keycloak.grants)
         r = _exchange(client, token, resource="https://wlm.example")
-        assert r.status_code == 400 and r.json()["error"] == "invalid_target"
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_target"
         assert len(keycloak.grants) == grants_before
 
     def test_bypass_admits_when_token_names_y(self, pat) -> None:
