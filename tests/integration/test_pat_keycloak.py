@@ -704,12 +704,11 @@ def test_a_foreign_link_of_the_caller_is_a_conflict(world: World) -> None:
     assert listed.json()["tokens"] == []
     assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
 
+    client = _keycloak_client(world)
+    caller = Caller(subject=uid, username=username, organizations=("tenant-a",))
+    link = client.ensure_link(caller)
     with pytest.raises(LinkConflict):
-        asyncio.run(
-            _keycloak_client(world).ensure_link(
-                Caller(subject=uid, username=username, organizations=("tenant-a",))
-            )
-        )
+        asyncio.run(link)
     assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
 
 
@@ -857,7 +856,8 @@ def test_pat_create_over_a_real_interactive_sign_in(world: World, capsys, monkey
     assert rc == 0, err
     token = out.strip()
     assert out == token + "\n"
-    assert "set-memory" in err and "tenant-a" in err
+    assert "set-memory" in err
+    assert "tenant-a" in err
     # Bob holds r-memory only: without --set the token carries exactly set-memory.
     exchanged = _exchange(world, token)
     assert exchanged.status_code == 200, exchanged.text

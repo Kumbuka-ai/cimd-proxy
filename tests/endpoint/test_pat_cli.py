@@ -64,7 +64,8 @@ class TestCreate:
             ("set-memory",),
             (RESOURCE,),
         )
-        assert "set-memory" in err and "tenant-a" in err
+        assert "set-memory" in err
+        assert "tenant-a" in err
         # The interactive path of every MCP client: register, authorize, token, then manage.
         assert calls[:2] == [
             ("GET", "/.well-known/oauth-authorization-server"),
@@ -99,7 +100,8 @@ class TestCreate:
             "127.0.0.1",
             "/callback",
         )
-        assert redirect.port and redirect.port > 0
+        assert redirect.port
+        assert redirect.port > 0
 
     def test_lifetime_organization_and_long_lifetime_reach_the_proxy(self, world, capsys) -> None:
         client, store, keycloak = world
@@ -133,7 +135,8 @@ class TestCreate:
         out, err = capsys.readouterr()
         assert rc == 1
         assert out == ""
-        assert "invalid_request" in err and "allow_long_lifetime" in err
+        assert "invalid_request" in err
+        assert "allow_long_lifetime" in err
         assert store.rows == {}
 
 
@@ -145,7 +148,8 @@ class TestListAndRevoke:
         rc = pat_cli.list_main(common_args(), http=client, open_browser=Browser(client))
         out, err = capsys.readouterr()
         assert rc == 0, err
-        assert "one" in out and "active" in out
+        assert "one" in out
+        assert "active" in out
         assert token not in out + err
 
     def test_revoke_revokes_and_a_second_revoke_is_refused(self, world, capsys) -> None:

@@ -82,7 +82,8 @@ class TestRP9SetBeyondOwner:
         out, err = capsys.readouterr()
         assert rc != 0
         assert out == ""
-        assert "insufficient_scope" in err and "set-dispatch" in err
+        assert "insufficient_scope" in err
+        assert "set-dispatch" in err
         assert store.rows == {}
 
     def test_bypass_a_set_within_the_owner_is_created(self, world, capsys) -> None:

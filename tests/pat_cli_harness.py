@@ -25,7 +25,7 @@ UPSTREAM_TOKEN = "https://issuer.example/realms/x/protocol/openid-connect/token"
 PROXY = "https://mcp-auth.example"
 RESOURCE = "https://log.example"
 # Distinctive values, so a search for them in output and files cannot hit by accident.
-OWNER_ACCESS_TOKEN = "owner-at-3f9c1d7e5b2a4068"  # noqa: S105 - test value
+OWNER_ACCESS_TOKEN = "owner-at-3f9c1d7e5b2a4068"  # noqa: S105 - test value  # gitleaks:allow
 UPSTREAM_REFRESH_TOKEN = "kc-refresh-8e1b6a2c4d0f"  # noqa: S105 - test value
 
 
