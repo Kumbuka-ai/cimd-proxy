@@ -743,3 +743,123 @@ def test_no_management_call_links_another_user(world: World) -> None:
     assert _links(world, victim) == []
     caller_links = _links(world, world.user_id(caller))
     assert [link["userId"] for link in caller_links] == [world.user_id(caller)]
+
+
+# --- pat-create over a real browser sign-in (authorization code at Keycloak) ---
+
+
+class _ToLoopback(httpx.HTTPTransport):
+    """Send requests for the proxy's public name to 127.0.0.1, where it listens.
+
+    The proxy's public URL is the name Keycloak reaches it by from inside its
+    container (``host.docker.internal``); the host running the test reaches the
+    same server on the loopback address. Only the connection target changes.
+    """
+
+    def __init__(self, public_host: str) -> None:
+        super().__init__()
+        self._public_host = public_host
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == self._public_host:
+            request.url = request.url.copy_with(host="127.0.0.1")
+        return super().handle_request(request)
+
+
+class _KeycloakBrowser:
+    """Follows the sign-in the way a browser does, filling Keycloak's login form."""
+
+    def __init__(self, transport: httpx.BaseTransport, username: str) -> None:
+        self.http = httpx.Client(transport=transport, follow_redirects=False, timeout=30)
+        self.username = username
+        # Keycloak marks its login cookies Secure; a browser sends them to
+        # http://localhost as a secure context, httpx's cookie jar does not. So the
+        # cookies are carried by hand, name and value, to every request.
+        self.cookies: dict[str, str] = {}
+
+    def _send(self, method: str, url: str, **kw) -> httpx.Response:
+        headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in self.cookies.items())}
+        response = self.http.request(method, url, headers=headers, **kw)
+        for line in response.headers.get_list("set-cookie"):
+            name, _, rest = line.partition("=")
+            value = rest.split(";", 1)[0]
+            if value and "max-age=0" not in line.lower():
+                self.cookies[name.strip()] = value
+            else:
+                self.cookies.pop(name.strip(), None)
+        return response
+
+    def __call__(self, url: str) -> None:
+        import html
+        import re
+
+        response = self._send("GET", url)
+        for _ in range(10):
+            if response.status_code in (301, 302, 303):
+                response = self._send("GET", response.headers["location"])
+                continue
+            if response.status_code != 200:
+                raise AssertionError(
+                    f"sign-in stopped at HTTP {response.status_code} on "
+                    f"{response.request.url.copy_with(query=None)}: "
+                    + " ".join(re.sub(r"<[^>]+>", " ", response.text).split())[-400:]
+                )
+            form = re.search(r'<form[^>]*action="([^"]+)"', response.text)
+            if form is None:  # the loopback listener's own page: the sign-in is done
+                return
+            fields = {"username": self.username, "credentialId": ""}
+            if 'name="password"' in response.text:
+                fields["password"] = "pw"
+            response = self._send("POST", html.unescape(form.group(1)), data=fields)
+        raise AssertionError("the sign-in did not finish")
+
+
+def test_pat_create_over_a_real_interactive_sign_in(world: World, capsys, monkeypatch) -> None:
+    """The token of the interactive path -- authorization code at Keycloak, through the
+    proxy -- is one /pat/tokens accepts, and pat-create turns it into a working token."""
+
+    from cimd_proxy import pat_cli
+
+    public = httpx.URL(world.env["PROXY_PUBLIC_URL"])
+    # The proxy's public name here is plain http on host.docker.internal, which the
+    # command would refuse; for this test that name is the loopback it stands for.
+    is_loopback = pat_cli._is_loopback
+    monkeypatch.setattr(pat_cli, "_is_loopback", lambda h: h == public.host or is_loopback(h))
+    world.admin(
+        "POST",
+        f"/{REALM}/clients",
+        json={
+            "clientId": "res-x-interactive",
+            "publicClient": True,
+            "standardFlowEnabled": True,
+            "directAccessGrantsEnabled": False,
+            "redirectUris": [f"{public}/callback"],
+            "attributes": {"pkce.code.challenge.method": "S256"},
+        },
+    )
+    org_scope = next(
+        s["id"]
+        for s in world.admin("GET", f"/{REALM}/client-scopes").json()
+        if s["name"] == "organization"
+    )
+    cid = world.admin.id_of("clients", clientId="res-x-interactive")
+    world.admin("DELETE", f"/{REALM}/clients/{cid}/optional-client-scopes/{org_scope}")
+    world.admin("PUT", f"/{REALM}/clients/{cid}/default-client-scopes/{org_scope}")
+
+    transport = _ToLoopback(public.host)
+    with httpx.Client(transport=transport, timeout=30) as http:
+        rc = pat_cli.create_main(
+            ["--proxy", str(public), "--resource", RES_X, "--name", "cli", "--timeout", "60"],
+            http=http,
+            open_browser=_KeycloakBrowser(transport, "bob"),
+        )
+    out, err = capsys.readouterr()
+    assert rc == 0, err
+    token = out.strip()
+    assert out == token + "\n"
+    assert "set-memory" in err and "tenant-a" in err
+    # Bob holds r-memory only: without --set the token carries exactly set-memory.
+    exchanged = _exchange(world, token)
+    assert exchanged.status_code == 200, exchanged.text
+    assert _roles(exchanged.json()["access_token"]) == ["r-memory"]
+    assert _claims(exchanged.json()["access_token"])["organization"] == ["tenant-a"]
