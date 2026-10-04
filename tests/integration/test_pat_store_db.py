@@ -150,13 +150,14 @@ def test_constraints_refuse_impossible_rows(database: Database) -> None:
 
 def test_a_row_without_an_organization_cannot_exist(database: Database) -> None:
     now = datetime.now(UTC)
+    row = (uuid.uuid4(), REALM, b"\x01" * 32, ["https://r"], [], now, now + timedelta(days=1))
+    statement = (
+        "INSERT INTO cimd_proxy.personal_access_token "
+        "(id, tenant, realm_issuer, owner_sub, name, token_hash, resources, scopes, "
+        "created_at, expires_at) VALUES (%s, '', %s, 'a', 'n', %s, %s, %s, %s, %s)"
+    )
     with psycopg.connect(database.app_dsn) as conn, pytest.raises(errors.CheckViolation):
-        conn.execute(
-            "INSERT INTO cimd_proxy.personal_access_token "
-            "(id, tenant, realm_issuer, owner_sub, name, token_hash, resources, scopes, "
-            "created_at, expires_at) VALUES (%s, '', %s, 'a', 'n', %s, %s, %s, %s, %s)",
-            (uuid.uuid4(), REALM, b"\x01" * 32, ["https://r"], [], now, now + timedelta(days=1)),
-        )
+        conn.execute(statement, row)
 
 
 async def test_schema_behind_the_code_refuses_to_start(database: Database, monkeypatch) -> None:

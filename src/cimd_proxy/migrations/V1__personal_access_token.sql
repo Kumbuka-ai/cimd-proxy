@@ -38,6 +38,7 @@
 -- ---------------------------------------------------------------------------
 DO $do$
 DECLARE
+    app_role   text := '${app_role}';
     is_super   boolean;
     is_bypass  boolean;
 BEGIN
@@ -53,21 +54,20 @@ BEGIN
             USING ERRCODE = 'CP001';
     END IF;
 
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '${app_role}') THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', '${app_role}',
-                       'change-me-cimd-proxy');
-        RAISE NOTICE 'created role % with the placeholder password -- rotate it', '${app_role}';
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = app_role) THEN
+        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', app_role, 'change-me-cimd-proxy');
+        RAISE NOTICE 'created role % with the placeholder password -- rotate it', app_role;
     END IF;
 
     SELECT rolsuper, rolbypassrls INTO is_super, is_bypass
-    FROM pg_catalog.pg_roles WHERE rolname = '${app_role}';
+    FROM pg_catalog.pg_roles WHERE rolname = app_role;
 
     IF is_super OR is_bypass THEN
         RAISE EXCEPTION
             'the runtime role % carries superuser=% bypassrls=%. Either one exempts it '
             'from every policy this schema may carry, and this migration will not grant '
             'it anything. Recreate the role without them.',
-            '${app_role}', is_super::text, is_bypass::text
+            app_role, is_super::text, is_bypass::text
             USING ERRCODE = 'CP002';
     END IF;
 END
