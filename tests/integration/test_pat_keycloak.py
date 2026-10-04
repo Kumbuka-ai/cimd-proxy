@@ -189,6 +189,7 @@ def _setup_realm(admin: Admin, proxy_url: str) -> None:
                     ("alice", ["r-memory", "dispatch-executor"]),
                     ("bob", ["r-memory"]),
                     ("carol", ["r-memory", "dispatch-executor"]),
+                    ("dave", ["r-memory"]),
                 )
             ],
             "clients": [
@@ -378,7 +379,7 @@ def world(database: Database, tmp_path_factory) -> Iterator[World]:
         )
         threading.Thread(target=server.run, daemon=True).start()
         _wait_http(f"http://127.0.0.1:{port}/healthz", timeout=30)
-        yield World(
+        world = World(
             kc=kc,
             realm_issuer=realm_issuer,
             admin=admin,
@@ -388,6 +389,10 @@ def world(database: Database, tmp_path_factory) -> Iterator[World]:
             key_dir=key_dir,
             database=database,
         )
+        # Every owner but dave belongs to an organization: a token is bound to one.
+        for username in ("alice", "bob", "carol"):
+            _add_member(world, "tenant-a", username)
+        yield world
     finally:
         if server is not None:
             server.should_exit = True
@@ -493,8 +498,19 @@ def test_resource_and_revocation(world: World) -> None:
     assert _exchange(world, created["token"]).json()["error"] == "invalid_grant"
 
 
+def test_owner_without_an_organization_gets_no_token(world: World) -> None:
+    r = _create(world, "dave", scopes=["set-memory"])
+    assert r.status_code == 403, r.text
+    assert r.json()["error"] == "organization_required"
+    assert "token" not in r.json()
+    with world.proxy() as c:
+        listed = c.get(
+            "/pat/tokens", headers={"Authorization": f"Bearer {world.owner_token('dave')}"}
+        )
+    assert listed.json()["tokens"] == []
+
+
 def test_tenant_a_never_yields_tenant_b(world: World) -> None:
-    _add_member(world, "tenant-a", "carol")
     r = _create(world, "carol", scopes=["set-memory"])
     assert r.status_code == 201, r.text
     assert r.json()["tenant"] == "tenant-a"

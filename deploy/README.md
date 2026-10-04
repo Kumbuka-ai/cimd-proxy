@@ -86,10 +86,13 @@ needs the equivalent of each item.
    roles the set carries, attached to the client in step 2 as *optional*. List
    them in `PAT_SCOPES`. The roles of an issued token are exactly those of the
    requested scopes; a scope whose roles the owner does not hold is withheld.
-4. **With organizations:** attach the `organization` client scope to the
-   client in step 2 as optional. A token bound to a tenant requests
-   `organization:<alias>`; without the scope on the client the exchange fails
-   with `invalid_scope` rather than issuing an unbound token.
+4. **Organizations:** attach the `organization` client scope to the client in
+   step 2 as optional. Every token is bound to one organization of its owner
+   and requests `organization:<alias>`; without the scope on the client the
+   exchange fails with `invalid_scope` rather than issuing an unbound token. An
+   owner who belongs to no organization gets no token
+   (`403 organization_required`), and a stored token without one is never
+   exchanged.
 5. **An admin client** (`PAT_ADMIN_CLIENT_ID`): confidential, service account
    with `realm-management` → `manage-users` (needed to link an owner to the
    identity provider; `view-users` is not enough), and the client attribute
@@ -99,26 +102,56 @@ needs the equivalent of each item.
 
 ### In the database
 
-Two roles: one that owns the schema and runs the migrations, one the proxy
-runs as. For example, as a superuser:
+Two roles. The **migrator** runs the migrations and owns the schema; it needs
+`CREATEROLE` and `CREATE` on the database and nothing more — never a superuser
+and never `BYPASSRLS` (the migration refuses either, `CP001`). The **runtime
+role** is the one the proxy connects as; the first migration creates it with a
+placeholder password, and it must not carry `SUPERUSER` or `BYPASSRLS` either
+(refused, `CP002`). Once, as a superuser:
 
 ```sql
-CREATE ROLE cimd_proxy_migrator LOGIN PASSWORD '…';
-CREATE ROLE cimd_proxy_app LOGIN PASSWORD '…';
+CREATE ROLE cimd_proxy_migrator LOGIN CREATEROLE PASSWORD '…';
 GRANT CONNECT, CREATE ON DATABASE app TO cimd_proxy_migrator;
-GRANT CONNECT ON DATABASE app TO cimd_proxy_app;
 ```
 
-Then, before the first start and after every upgrade:
+The migrations run from `ghcr.io/kumbuka-ai/cimd-proxy-migrations:<tag>`, the
+same tag as the proxy, before the first start and after every upgrade. It reads
+Flyway's own variables:
 
-```bash
-docker compose run --rm -e PAT_MIGRATION_DATABASE_URL=… -e PAT_DATABASE_APP_ROLE=cimd_proxy_app \
-  cimd-proxy migrate
+| Variable | Meaning | Default |
+|---|---|---|
+| `FLYWAY_URL` | `jdbc:postgresql://<host>:5432/<database>` | — |
+| `FLYWAY_USER`, `FLYWAY_PASSWORD` | the migrator | — |
+| `FLYWAY_SCHEMAS` | the schema (= `PAT_DATABASE_SCHEMA`) | `cimd_proxy` |
+| `FLYWAY_PLACEHOLDERS_APP_ROLE` | the runtime role (the user of `PAT_DATABASE_URL`) | `cimd_proxy` |
+
+With `FLYWAY_USER` and `FLYWAY_PASSWORD` both empty the image does nothing and
+exits 0 — personal access tokens are off — so a deployment can run it
+unconditionally before the proxy (`depends_on` with
+`condition: service_completed_successfully`, see `compose.fragment.yml`). One of
+the two without the other is a configuration error and exits 2.
+
+After the first run, rotate the runtime role's placeholder password and put the
+new one into `PAT_DATABASE_URL`:
+
+```sql
+ALTER ROLE cimd_proxy PASSWORD '…';
 ```
 
-The migrations grant the application role `SELECT` and `INSERT` on the token
-table and `UPDATE` on two columns (`last_used_at`, `revoked_at`); no delete, no
-DDL. The proxy refuses to start while the schema is behind the code.
+The migrations grant the runtime role `SELECT` and `INSERT` on the token table,
+`UPDATE` on two columns (`last_used_at`, `revoked_at`) and `SELECT` on the
+Flyway history; no delete, no DDL. The proxy refuses to start while the
+history is behind the code.
+
+### Smoke test
+
+`deploy/pat-smoke.sh` runs a token end to end against a live deployment:
+create one for a permission set, exchange it, call one MCP tool the set
+permits and one it does not (which must be refused with a reason you name),
+revoke it, and see the exchange refused. It needs an owner's access token from
+an interactive sign-in that carries `sid` and `organization`, revokes the token
+it created on every exit, and prints no credential. The variables are listed at
+its head.
 
 ### Rotating the signing key
 

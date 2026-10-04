@@ -4,8 +4,8 @@
 """Entrypoint for ``python -m cimd_proxy`` and the container CMD.
 
 Reads the configuration from the environment, then hands the app to uvicorn.
-``python -m cimd_proxy migrate`` applies the personal-access-token schema
-migrations instead (see :mod:`cimd_proxy.migrate`).
+There are no subcommands: the personal-access-token schema is migrated by the
+``cimd-proxy-migrations`` image (see :mod:`cimd_proxy.migrations`).
 """
 
 from __future__ import annotations
@@ -20,12 +20,11 @@ from .config import load_config
 
 def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
-    if args == ["migrate"]:
-        from .migrate import main as migrate_main
-
-        raise SystemExit(migrate_main())
     if args:
-        raise SystemExit(f"unknown arguments {args!r}; the only subcommand is 'migrate'")
+        raise SystemExit(
+            f"unknown arguments {args!r}; the proxy takes none "
+            "(schema migrations run from the cimd-proxy-migrations image)"
+        )
     config = load_config()
     app = create_app(config)
     uvicorn.run(

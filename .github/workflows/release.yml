@@ -14,6 +14,10 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: kumbuka-ai/cimd-proxy
+      # The schema migrations, built from the same tag: Flyway plus the SQL files
+      # under src/cimd_proxy/migrations/ (Dockerfile.migrations). A deployment
+      # runs it before the proxy; the two always carry the same schema version.
+      MIGRATIONS_IMAGE_NAME: kumbuka-ai/cimd-proxy-migrations
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -36,6 +40,7 @@ jobs:
           ref="${GITHUB_REF#refs/tags/}"
           echo "version=${ref}" >> "${GITHUB_OUTPUT}"
           echo "image=${REGISTRY}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "migrations_image=${REGISTRY}/${MIGRATIONS_IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -52,4 +57,22 @@ jobs:
             org.opencontainers.image.version=${{ steps.tags.outputs.version }}
             org.opencontainers.image.title=cimd-proxy
             org.opencontainers.image.description=OAuth 2.1 authorization server speaking CIMD outward and federating to an OIDC provider.
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push the migrations image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.migrations
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.migrations_image }}:${{ steps.tags.outputs.version }}
+            ${{ steps.tags.outputs.migrations_image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+            org.opencontainers.image.title=cimd-proxy-migrations
+            org.opencontainers.image.description=Flyway schema migrations of the cimd-proxy personal-access-token store.
             org.opencontainers.image.licenses=Apache-2.0

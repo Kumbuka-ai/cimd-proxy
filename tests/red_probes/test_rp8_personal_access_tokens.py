@@ -32,8 +32,8 @@ BOB = {"Authorization": "Bearer bob-session"}
 @pytest.fixture
 def pat(pat_app_factory):
     app, store, keycloak = pat_app_factory()
-    keycloak.add_session("alice-session", "alice-sub")
-    keycloak.add_session("bob-session", "bob-sub")
+    keycloak.add_session("alice-session", "alice-sub", organization=["tenant-a"])
+    keycloak.add_session("bob-session", "bob-sub", organization=["tenant-a"])
     keycloak.add_session("carol-session", "carol-sub", organization=["tenant-a"])
     return TestClient(app), store, keycloak
 
@@ -163,18 +163,46 @@ class TestRP8Tenant:
         assert _exchange(client, token).json()["error"] == "invalid_grant"
         assert len(keycloak.grants) == grants_before
 
-    def test_bypass_token_without_tenant_requests_no_organization(self, pat) -> None:
-        client, _, keycloak = pat
-        token = _create(client)["token"]
-        assert _exchange(client, token).status_code == 200
-        assert "organization" not in keycloak.grants[-1].scope
+    def test_guarded_owner_without_an_organization_gets_no_token(self, pat) -> None:
+        client, store, keycloak = pat
+        keycloak.add_session("dave-session", "dave-sub")
+        r = client.post(
+            "/pat/tokens",
+            json={"name": "agent", "resources": ["https://log.example"], "scopes": []},
+            headers={"Authorization": "Bearer dave-session"},
+        )
+        assert r.status_code == 403
+        assert r.json()["error"] == "organization_required"
+        assert "insert" not in store.calls
+        assert keycloak.grants == []
 
-    @pytest.mark.xfail(strict=True, reason="RP8 red control: no tenant, no organization scope.")
-    def test_bypass_would_break_tenant_gate(self, pat) -> None:
-        client, _, keycloak = pat
+    def test_guarded_row_without_an_organization_is_never_exchanged(self, pat) -> None:
+        client, store, keycloak = pat
         token = _create(client)["token"]
-        _exchange(client, token)
-        assert "organization:" in keycloak.grants[-1].scope
+        _set(store, token, tenant="")
+        grants_before = len(keycloak.grants)
+        r = _exchange(client, token)
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_grant"
+        assert "organization" in r.json()["error_description"]
+        assert len(keycloak.grants) == grants_before
+
+    def test_bypass_owner_with_an_organization_gets_a_bound_token(self, pat) -> None:
+        client, _, keycloak = pat
+        created = _create(client)
+        assert created["tenant"] == "tenant-a"
+        assert _exchange(client, created["token"]).status_code == 200
+        assert "organization:tenant-a" in keycloak.grants[-1].scope.split()
+
+    @pytest.mark.xfail(strict=True, reason="RP8 red control: an owner with one is admitted.")
+    def test_bypass_would_break_organization_gate(self, pat) -> None:
+        client, _, _ = pat
+        r = client.post(
+            "/pat/tokens",
+            json={"name": "agent", "resources": ["https://log.example"], "scopes": []},
+            headers=ALICE,
+        )
+        assert r.status_code == 403
 
 
 class TestRP8ForeignOwner:

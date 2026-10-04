@@ -14,11 +14,16 @@ about stays inside the proxy:
    expiry and the requested resource.
 3. The proxy signs a 60-second assertion naming the owner and presents it to
    the upstream with the JWT Authorization Grant, requesting exactly the token's
-   client scopes — plus ``organization:<tenant>`` when the token is bound to a
-   tenant, so a token created in one organization can never come back naming
-   another (measured: a non-member gets no organization claim at all).
+   client scopes plus ``organization:<tenant>``, so a token created in one
+   organization can never come back naming another (measured: a non-member
+   gets no organization claim at all).
 4. A refresh token, should the upstream ever send one, is dropped. The agent
    exchanges again when the short token runs out.
+
+Every token is bound to exactly one organization. An owner who belongs to none
+gets no token, and a stored token without one is never exchanged: a short token
+without an organization claim would leave the tenant to whichever default the
+resource applies, and that is not a decision the proxy may leave open.
 
 Who may carry which scope is decided by the upstream, not by the proxy: when a
 token is created, the proxy performs one trial exchange per resource for the
@@ -249,6 +254,8 @@ class PatService:
             raise InvalidGrant("the personal access token is expired")
         if record.realm_issuer != self._pat.realm_issuer:
             raise InvalidGrant("the personal access token belongs to another realm")
+        if not record.tenant:
+            raise InvalidGrant("the personal access token is not bound to an organization")
 
         entry = self._resolve_resource(record, resource)
         response = await self._keycloak.jwt_bearer_grant(
@@ -325,7 +332,7 @@ def _json(response: Any) -> dict[str, Any]:
 
 
 def _scope_param(scopes: tuple[str, ...], tenant: str) -> str:
-    return " ".join([*scopes, *([f"organization:{tenant}"] if tenant else [])])
+    return " ".join([*scopes, f"organization:{tenant}"])
 
 
 def _organizations(claim: Any) -> tuple[str, ...]:
@@ -347,13 +354,19 @@ def _tenant_for(caller: Caller, requested: str | None) -> str:
                 403, "insufficient_scope", "the owner is not a member of that organization"
             )
         return requested
+    if not caller.organizations:
+        raise ManagementError(
+            403,
+            "organization_required",
+            "a personal access token is bound to an organization, and the owner belongs to none",
+        )
     if len(caller.organizations) > 1:
         raise ManagementError(
             400,
             "invalid_request",
             "the owner belongs to several organizations; name one in 'organization'",
         )
-    return caller.organizations[0] if caller.organizations else ""
+    return caller.organizations[0]
 
 
 def _lifetime(body: dict[str, Any]) -> tuple[int, bool]:

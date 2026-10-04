@@ -12,7 +12,7 @@ import psycopg
 import pytest
 from psycopg import errors
 
-from cimd_proxy.migrate import latest_version, migrate
+from cimd_proxy.migrations import latest_version
 from cimd_proxy.pat_format import generate, token_hash
 from cimd_proxy.pat_store import PatRecord, PostgresPatStore, SchemaBehind
 
@@ -107,10 +107,10 @@ def test_application_role_holds_exactly_the_migration_grants(database: Database)
             assert not priv(
                 f"SELECT has_column_privilege('cimd_app', '{table}', '{column}', 'UPDATE')"
             )
-        assert priv(f"SELECT has_table_privilege('cimd_app', '{SCHEMA}.schema_history', 'SELECT')")
-        assert not priv(
-            f"SELECT has_table_privilege('cimd_app', '{SCHEMA}.schema_history', 'INSERT')"
-        )
+        history = f"{SCHEMA}.flyway_schema_history"
+        assert priv(f"SELECT has_table_privilege('cimd_app', '{history}', 'SELECT')")
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            assert not priv(f"SELECT has_table_privilege('cimd_app', '{history}', '{privilege}')")
         assert not priv(f"SELECT has_schema_privilege('cimd_app', '{SCHEMA}', 'CREATE')")
         owner = conn.execute(
             "SELECT tableowner FROM pg_tables WHERE schemaname = %s AND tablename = %s",
@@ -126,6 +126,9 @@ def test_application_role_holds_exactly_the_migration_grants(database: Database)
         "UPDATE cimd_proxy.personal_access_token SET owner_sub = 'mallory'",
         "UPDATE cimd_proxy.personal_access_token SET expires_at = now() + interval '100 years'",
         "CREATE TABLE cimd_proxy.smuggled (x int)",
+        "ALTER TABLE cimd_proxy.personal_access_token ADD COLUMN smuggled int",
+        "DROP TABLE cimd_proxy.personal_access_token",
+        "UPDATE cimd_proxy.flyway_schema_history SET success = true",
     ],
 )
 def test_application_role_is_refused_what_it_was_not_granted(
@@ -145,14 +148,34 @@ def test_constraints_refuse_impossible_rows(database: Database) -> None:
         )
 
 
-def test_migrate_is_idempotent(database: Database) -> None:
-    assert migrate(database.migrator_dsn, SCHEMA, "cimd_app") == []
-    with psycopg.connect(database.admin_dsn) as conn:
-        row = conn.execute(f"SELECT max(version) FROM {SCHEMA}.schema_history").fetchone()
-    assert row == (latest_version(),)
+def test_a_row_without_an_organization_cannot_exist(database: Database) -> None:
+    now = datetime.now(UTC)
+    row = (uuid.uuid4(), REALM, b"\x01" * 32, ["https://r"], [], now, now + timedelta(days=1))
+    statement = (
+        "INSERT INTO cimd_proxy.personal_access_token "
+        "(id, tenant, realm_issuer, owner_sub, name, token_hash, resources, scopes, "
+        "created_at, expires_at) VALUES (%s, '', %s, 'a', 'n', %s, %s, %s, %s, %s)"
+    )
+    with psycopg.connect(database.app_dsn) as conn, pytest.raises(errors.CheckViolation):
+        conn.execute(statement, row)
 
 
-async def test_schema_behind_the_code_refuses_to_start(database: Database) -> None:
+async def test_schema_behind_the_code_refuses_to_start(database: Database, monkeypatch) -> None:
+    """The database is at the latest migration; code that needs one more is refused."""
+
+    import cimd_proxy.pat_store as pat_store
+
+    monkeypatch.setattr(pat_store, "latest_version", lambda: latest_version() + 1)
+    store = PostgresPatStore(database.app_dsn, SCHEMA)
+    await store.open()
+    try:
+        with pytest.raises(SchemaBehind, match=f"version {latest_version()}, this code needs"):
+            await store.check_schema()
+    finally:
+        await store.close()
+
+
+async def test_an_unmigrated_schema_refuses_to_start(database: Database) -> None:
     with psycopg.connect(database.admin_dsn, autocommit=True) as conn:
         conn.execute("CREATE SCHEMA IF NOT EXISTS cimd_proxy_empty")
         conn.execute("GRANT USAGE ON SCHEMA cimd_proxy_empty TO cimd_app")
@@ -168,19 +191,17 @@ async def test_schema_behind_the_code_refuses_to_start(database: Database) -> No
 async def test_schema_ahead_of_the_code_is_accepted(database: Database) -> None:
     """An image rolled back to an older version starts against its successor's schema."""
 
+    result = database.migrate(env={"FLYWAY_SCHEMAS": "cimd_proxy_ahead"})
+    assert result.returncode == 0, result.stdout + result.stderr
     with psycopg.connect(database.admin_dsn, autocommit=True) as conn:
-        conn.execute("CREATE SCHEMA IF NOT EXISTS cimd_proxy_ahead")
+        # What the history of a successor release looks like: one more applied row.
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS cimd_proxy_ahead.schema_history "
-            "(version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+            "INSERT INTO cimd_proxy_ahead.flyway_schema_history (installed_rank, version, "
+            "description, type, script, checksum, installed_by, execution_time, success) "
+            "SELECT max(installed_rank) + 1, %s, 'successor', 'SQL', 'V9__successor.sql', 0, "
+            "'cimd_migrator', 0, true FROM cimd_proxy_ahead.flyway_schema_history",
+            (str(latest_version() + 1),),
         )
-        conn.execute(
-            "INSERT INTO cimd_proxy_ahead.schema_history (version) VALUES (%s) "
-            "ON CONFLICT DO NOTHING",
-            (latest_version() + 1,),
-        )
-        conn.execute("GRANT USAGE ON SCHEMA cimd_proxy_ahead TO cimd_app")
-        conn.execute("GRANT SELECT ON cimd_proxy_ahead.schema_history TO cimd_app")
     store = PostgresPatStore(database.app_dsn, "cimd_proxy_ahead")
     await store.open()
     try:

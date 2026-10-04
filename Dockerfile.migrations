@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.7
+#
+# cimd-proxy-migrations: the official Flyway image plus this repository's
+# migrations. Built from the same tag as the proxy image (release.yml), so the
+# two always carry the same schema version.
+#
+# The SQL files exist once, under src/cimd_proxy/migrations/: the proxy image
+# carries them inside its package to know which version it needs, this image
+# carries them to apply it.
+#
+# The base is pinned by the digest of its multi-arch index, so amd64 and arm64
+# get the same Flyway and a re-tag upstream changes nothing here.
+FROM flyway/flyway:13.9.0-alpine@sha256:ae8e985a8caf73181a39aad823690f27d55c850d4c5cea92a94c0ce4b3943156
+
+# Keep PostgreSQL support and nothing else. The official image ships the JDBC
+# drivers and Flyway modules of some thirty databases, and those carry the
+# image's known vulnerabilities (measured with Trivy on 13.9.0-alpine: 12 at
+# HIGH or CRITICAL in the base image, none after this step). This image talks to
+# one PostgreSQL and needs none of them.
+RUN find /flyway/drivers -mindepth 1 -maxdepth 1 ! -name 'postgresql-*.jar' -exec rm -rf {} + \
+ && rm -rf /flyway/lib/aad \
+ && cd /flyway/lib/flyway \
+ && for f in flyway-database-* flyway-gcp-* flyway-locations-s3-* flyway-mysql-* \
+             flyway-sqlserver-* flyway-singlestore-* flyway-firebird-*; do \
+        case "$f" in flyway-database-postgresql-*) ;; *) rm -f "$f" ;; esac; \
+    done
+
+COPY src/cimd_proxy/migrations/*.sql /flyway/sql/
+COPY --chmod=0755 docker/migrations-entrypoint.sh /usr/local/bin/cimd-proxy-migrations
+
+# Flyway reads FLYWAY_* from the environment. These are the defaults a
+# deployment overrides only with a reason; FLYWAY_URL, FLYWAY_USER and
+# FLYWAY_PASSWORD come from the deployment and have no default.
+#   FLYWAY_SCHEMAS               the schema; Flyway creates it and keeps its
+#                                history table in it.
+#   FLYWAY_PLACEHOLDERS_APP_ROLE the role the proxy connects as.
+ENV FLYWAY_LOCATIONS=filesystem:/flyway/sql \
+    FLYWAY_SCHEMAS=cimd_proxy \
+    FLYWAY_PLACEHOLDERS_APP_ROLE=cimd_proxy \
+    FLYWAY_CLEAN_DISABLED=true \
+    FLYWAY_VALIDATE_MIGRATION_NAMING=true \
+    FLYWAY_CONNECT_RETRIES=10
+
+USER 10001:10001
+
+ENTRYPOINT ["cimd-proxy-migrations"]
+CMD ["migrate"]

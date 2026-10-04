@@ -23,7 +23,7 @@ from psycopg import errors, sql
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from .migrate import latest_version
+from .migrations import latest_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +69,7 @@ class PatStore(Protocol):
 
 
 class SchemaBehind(RuntimeError):
-    """The database schema is older than this code; run ``python -m cimd_proxy migrate``."""
+    """The database schema is older than this code; run the cimd-proxy-migrations image."""
 
 
 _COLUMNS = sql.SQL(", ").join(
@@ -116,7 +116,7 @@ class PostgresPatStore:
     def __init__(self, dsn: str, schema: str) -> None:
         self._pool = AsyncConnectionPool(dsn, min_size=1, max_size=5, open=False)
         names = {
-            "history": sql.SQL("{}.schema_history").format(sql.Identifier(schema)),
+            "history": sql.SQL("{}.flyway_schema_history").format(sql.Identifier(schema)),
             "table": sql.SQL("{}.personal_access_token").format(sql.Identifier(schema)),
             "columns": _COLUMNS,
         }
@@ -124,7 +124,12 @@ class PostgresPatStore:
         def compose(template: str) -> sql.Composed:
             return sql.SQL(template).format(**names)
 
-        self._q_version = compose("SELECT coalesce(max(version), 0) FROM {history}")
+        # Flyway records the schema it created as a row without a version, and a
+        # failed migration as success = false; neither counts.
+        self._q_version = compose(
+            "SELECT coalesce(max(version::integer), 0) FROM {history} "
+            "WHERE success AND version IS NOT NULL"
+        )
         self._q_insert = compose(
             "INSERT INTO {table} (id, tenant, realm_issuer, owner_sub, name, token_hash, "
             "resources, scopes, created_at, expires_at) "
@@ -160,7 +165,7 @@ class PostgresPatStore:
         if current < latest_version():
             raise SchemaBehind(
                 f"database schema is at version {current}, this code needs {latest_version()}; "
-                "run `python -m cimd_proxy migrate`"
+                "run the cimd-proxy-migrations image of the same release"
             )
 
     async def insert(self, record: PatRecord, token_hash: bytes) -> None:

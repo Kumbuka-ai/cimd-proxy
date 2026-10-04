@@ -1,6 +1,13 @@
 db-owner   RED              E   assert not True
 db-grant   RED              E   assert not True
+db-tenant  RED              E   Failed: DID NOT RAISE CheckViolation
+img-bypass RED              E   assert 0 != 0
+img-super  RED              E   assert 0 != 0
+img-off    RED              E   AssertionError: cimd-proxy-migrations: only one of FLYWAY_USER and FLYWAY_PASSWORD is set; set both or neither
+img-rerun  RED              E   assert 'No migration necessary' in 'Flyway OSS Edition 13.9.0 by Redgate\n\nSee release notes here: https://help.red-gate.com/help/flyway-cli13/he
+behind     RED              E   Failed: DID NOT RAISE SchemaBehind
 kc-set     RED              E   AssertionError: assert 'dispatch-executor' not in ['dispatch-executor', 'r-memory']
-kc-trial   RED              E   AssertionError: {"token":"kmb_pat_<redacted>","id":"5a06bdf2-ca7c-4926-90e2-f4a94875d801","name":"agent-e73
+kc-trial   RED              E   AssertionError: {"token":"kmb_pat_<redacted>","id":"2bf5611c-b487-4b5b-98bc-11d3464c55fa","name":"agent-da3
 kc-sid     RED              E   assert 200 == 403
 kc-tenant  RED              E   KeyError: 'organization'
+kc-org     RED              E   AssertionError: Internal Server Error
