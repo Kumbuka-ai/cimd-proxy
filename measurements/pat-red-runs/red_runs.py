@@ -24,9 +24,32 @@ from typing import NamedTuple
 PAT = Path("src/cimd_proxy/pat.py")
 STORE = Path("src/cimd_proxy/pat_store.py")
 MIGRATION = Path("src/cimd_proxy/migrations/V1__personal_access_token.sql")
+ENTRYPOINT = Path("docker/migrations-entrypoint.sh")
 RP8 = "tests/red_probes/test_rp8_personal_access_tokens.py"
 DB = "tests/integration/test_pat_store_db.py"
+IMG = "tests/integration/test_migrations_image.py"
 KC = "tests/integration/test_pat_keycloak.py"
+
+# Before an owner without an organization was refused, the tenant fell back to "".
+ORG_GUARD = (
+    "    if not caller.organizations:\n"
+    "        raise ManagementError(\n"
+    "            403,\n"
+    '            "organization_required",\n'
+    '            "a personal access token is bound to an organization, '
+    'and the owner belongs to none",\n'
+    "        )\n"
+)
+ORG_FALLBACK = '    return caller.organizations[0] if caller.organizations else ""\n'
+ORG_RETURN = "    return caller.organizations[0]\n"
+MULTI_ORG = (
+    "    if len(caller.organizations) > 1:\n"
+    "        raise ManagementError(\n"
+    "            400,\n"
+    '            "invalid_request",\n'
+    "            \"the owner belongs to several organizations; name one in 'organization'\",\n"
+    "        )\n"
+)
 
 
 class Mutation(NamedTuple):
@@ -73,9 +96,25 @@ UNIT = [
     Mutation(
         "tenant",
         PAT,
-        '    return " ".join([*scopes, *([f"organization:{tenant}"] if tenant else [])])',
+        '    return " ".join([*scopes, f"organization:{tenant}"])',
         '    return " ".join(scopes)',
         f"{RP8}::TestRP8Tenant::test_guarded_tenant_token_requests_only_its_organization",
+    ),
+    Mutation(
+        "org-create",
+        PAT,
+        ORG_GUARD + MULTI_ORG + ORG_RETURN,
+        MULTI_ORG + ORG_FALLBACK,
+        f"{RP8}::TestRP8Tenant::test_guarded_owner_without_an_organization_gets_no_token",
+    ),
+    Mutation(
+        "org-exch",
+        PAT,
+        "        if not record.tenant:\n"
+        '            raise InvalidGrant("the personal access token is not bound to an '
+        'organization")\n',
+        "",
+        f"{RP8}::TestRP8Tenant::test_guarded_row_without_an_organization_is_never_exchanged",
     ),
     Mutation(
         "realm",
@@ -119,9 +158,52 @@ INTEGRATION = [
     Mutation(
         "db-grant",
         MIGRATION,
-        "GRANT UPDATE (last_used_at, revoked_at) ON {schema}.personal_access_token",
-        "GRANT UPDATE ON {schema}.personal_access_token",
+        "GRANT UPDATE (last_used_at, revoked_at)\n    ON ${flyway:defaultSchema}",
+        "GRANT UPDATE\n    ON ${flyway:defaultSchema}",
         f"{DB}::test_application_role_holds_exactly_the_migration_grants",
+    ),
+    Mutation(
+        "db-tenant",
+        MIGRATION,
+        "    tenant        text        NOT NULL CHECK (tenant <> ''),",
+        "    tenant        text        NOT NULL,",
+        f"{DB}::test_a_row_without_an_organization_cannot_exist",
+    ),
+    Mutation(
+        "img-bypass",
+        MIGRATION,
+        "    IF is_super OR is_bypass THEN\n        RAISE EXCEPTION\n            'the runtime role",
+        "    IF false THEN\n        RAISE EXCEPTION\n            'the runtime role",
+        f"{IMG}::test_a_runtime_role_with_bypassrls_is_refused",
+    ),
+    Mutation(
+        "img-super",
+        MIGRATION,
+        "    IF is_super OR is_bypass THEN\n        RAISE EXCEPTION\n"
+        "            'the migrating role",
+        "    IF false THEN\n        RAISE EXCEPTION\n            'the migrating role",
+        f"{IMG}::test_a_superuser_migrator_is_refused",
+    ),
+    Mutation(
+        "img-off",
+        ENTRYPOINT,
+        'if [ -z "$user" ] && [ -z "$password" ]; then',
+        "if false; then",
+        f"{IMG}::test_empty_credentials_exit_zero_and_create_nothing",
+    ),
+    Mutation(
+        "img-rerun",
+        ENTRYPOINT,
+        'exec flyway "$@"',
+        'flyway -cleanDisabled=false clean && exec flyway "$@"',
+        f"{IMG}::test_cold_start_creates_schema_table_and_role_and_a_rerun_changes_nothing",
+    ),
+    Mutation(
+        "behind",
+        STORE,
+        "        if current < latest_version():",
+        "        if False:",
+        f"{IMG}::test_the_proxy_does_not_start_against_an_unmigrated_schema",
     ),
     Mutation(
         "kc-set",
@@ -147,9 +229,16 @@ INTEGRATION = [
     Mutation(
         "kc-tenant",
         PAT,
-        '    return " ".join([*scopes, *([f"organization:{tenant}"] if tenant else [])])',
+        '    return " ".join([*scopes, f"organization:{tenant}"])',
         '    return " ".join(scopes)',
         f"{KC}::test_tenant_a_never_yields_tenant_b",
+    ),
+    Mutation(
+        "kc-org",
+        PAT,
+        ORG_GUARD + MULTI_ORG + ORG_RETURN,
+        MULTI_ORG + ORG_FALLBACK,
+        f"{KC}::test_owner_without_an_organization_gets_no_token",
     ),
 ]
 

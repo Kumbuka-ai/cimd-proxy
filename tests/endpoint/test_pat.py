@@ -22,8 +22,8 @@ AUTH = {"Authorization": "Bearer alice-session"}
 @pytest.fixture
 def pat(pat_app_factory):
     app, store, keycloak = pat_app_factory()
-    keycloak.add_session("alice-session", "alice-sub")
-    keycloak.add_session("bob-session", "bob-sub")
+    keycloak.add_session("alice-session", "alice-sub", organization=["tenant-a"])
+    keycloak.add_session("bob-session", "bob-sub", organization=["tenant-a"])
     return TestClient(app), store, keycloak
 
 
@@ -54,13 +54,13 @@ class TestCreate:
         assert token.startswith("kmb_pat_")
         assert body["resources"] == ["https://log.example"]
         assert body["scopes"] == ["set-memory"]
-        assert body["tenant"] == ""
+        assert body["tenant"] == "tenant-a"
         created = datetime.fromisoformat(body["created_at"])
         assert datetime.fromisoformat(body["expires_at"]) - created == timedelta(days=90)
         assert list(store.rows) == [token_hash(token)]
         assert keycloak.links == {"alice-sub": "alice-sub"}
         trial = keycloak.grants[-1]
-        assert (trial.client_id, trial.scope) == ("log-mcp-pat", "set-memory")
+        assert (trial.client_id, trial.scope) == ("log-mcp-pat", "set-memory organization:tenant-a")
         assert assertion_claims(trial.assertion)["sub"] == "alice-sub"
         assert "token" not in client.get("/pat/tokens", headers=AUTH).json()["tokens"][0]
 
@@ -242,7 +242,7 @@ class TestExchange:
         assert r.headers["cache-control"] == "no-store"
         grant = keycloak.grants[-1]
         assert (grant.client_id, grant.client_secret) == ("log-mcp-pat", "pat-client-secret")
-        assert grant.scope == "set-memory"
+        assert grant.scope == "set-memory organization:tenant-a"
         claims = assertion_claims(grant.assertion)
         assert (claims["sub"], claims["aud"]) == ("alice-sub", REALM)
         assert store.by_id(_list_id(client)).last_used_at is not None

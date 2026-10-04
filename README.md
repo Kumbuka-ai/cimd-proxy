@@ -170,9 +170,10 @@ Every required value is checked at start. A missing one is a loud startup
 error, never a default that quietly does something else.
 
 Personal access tokens are off by default. To switch them on, provision the
-database and run `python -m cimd_proxy migrate` with a schema-owning role
-(`PAT_MIGRATION_DATABASE_URL`) before the first start; the proxy refuses to
-start while its schema is behind the code.
+database and run the `ghcr.io/kumbuka-ai/cimd-proxy-migrations` image of the
+same tag (Flyway plus this repository's migrations) before the first start and
+after every upgrade; the proxy refuses to start while its schema is behind the
+code. Every token is bound to one organization of its owner.
 
 `deploy/` carries the reference shape for a compose-based deployment behind an
 existing reverse proxy: a compose fragment, an annotated environment template,

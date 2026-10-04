@@ -50,4 +50,5 @@ jobs:
       packages: read
     with:
       image-targets: >-
-        [{"name": "cimd-proxy", "context": ".", "file": "Dockerfile"}]
+        [{"name": "cimd-proxy", "context": ".", "file": "Dockerfile"},
+         {"name": "cimd-proxy-migrations", "context": ".", "file": "Dockerfile.migrations"}]

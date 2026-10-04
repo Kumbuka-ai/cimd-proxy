@@ -18,3 +18,22 @@ owner, the published key) and the measurement in
 The realm-row mutation shows a second line of defence: without the realm check,
 the resource check still refuses (`invalid_target`), and the probe goes red
 because it asserts the precise refusal.
+
+## Migrations image and organization binding
+
+The schema is applied by the `cimd-proxy-migrations` image, and the
+integration tests build that image from the working tree at the start of every
+run. A mutation of a migration or of the image's entrypoint is therefore
+measured as it would ship: `img-*` and `db-*` change the SQL file or
+`docker/migrations-entrypoint.sh`, the next test session rebuilds the image,
+and the probe runs Flyway against PostgreSQL.
+
+- `img-off` — without the "no credentials, nothing to do" branch the image
+  reaches the half-configured refusal and exits 2.
+- `img-rerun` — an entrypoint that cleans before migrating re-applies the
+  migration; the probe sees it in the Flyway history (`installed_on`) and in the
+  missing "No migration necessary".
+- `org-create`, `kc-org` — restore the old fallback to an empty tenant. The
+  unit probe goes red on the status; against PostgreSQL the request fails with
+  a 500 instead of the typed refusal, because the table's `CHECK (tenant <> '')`
+  refuses the row: the second line of defence, observed.
