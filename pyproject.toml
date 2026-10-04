@@ -4,7 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cimd-proxy"
-version = "0.2.1"
+# The version lives in src/cimd_proxy/__init__.py and nowhere else; the
+# FastAPI app and the wheel both read it from there (tests/unit/test_version.py).
+dynamic = ["version"]
 description = "OAuth 2.1 authorization proxy that speaks CIMD outward and federates to an upstream OIDC provider."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -23,6 +25,9 @@ dependencies = [
 
 [project.scripts]
 cimd-proxy = "cimd_proxy.__main__:main"
+pat-create = "cimd_proxy.pat_cli:create"
+pat-list = "cimd_proxy.pat_cli:list_"
+pat-revoke = "cimd_proxy.pat_cli:revoke"
 
 [project.optional-dependencies]
 test = [
@@ -36,6 +41,9 @@ test = [
 dev = [
     "ruff>=0.7",
 ]
+
+[tool.hatch.version]
+path = "src/cimd_proxy/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cimd_proxy"]

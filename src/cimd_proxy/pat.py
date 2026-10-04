@@ -12,11 +12,11 @@ about stays inside the proxy:
    looked up; a mistyped or invented token never reaches the database.
 2. The row is found by the SHA-256 of the token and checked for revocation,
    expiry and the requested resource.
-3. The proxy signs a 60-second assertion naming the owner and presents it to
-   the upstream with the JWT Authorization Grant, requesting exactly the token's
-   client scopes plus ``organization:<tenant>``, so a token created in one
-   organization can never come back naming another (measured: a non-member
-   gets no organization claim at all).
+3. The proxy signs an assertion naming the owner, valid for at most 60
+   seconds, and presents it to the upstream with the JWT Authorization Grant,
+   requesting exactly the token's client scopes plus ``organization:<tenant>``,
+   so a token created in one organization can never come back naming another
+   (measured: a non-member gets no organization claim at all).
 4. A refresh token, should the upstream ever send one, is dropped. The agent
    exchanges again when the short token runs out.
 
@@ -30,6 +30,13 @@ token is created, the proxy performs one trial exchange per resource for the
 requested set and refuses the token if the upstream drops any scope from it
 (measured: Keycloak drops an optional client scope whose roles the user does
 not hold).
+
+A creation may instead ask for ``all_permitted_scopes``: every scope of
+``PAT_SCOPES`` the owner may carry. The trial exchange then requests all of
+them, and what the upstream grants at every named resource becomes the token's
+set -- written into the row as a list like any other, so the exchange later
+requests exactly that list and a role the owner gains afterwards does not widen
+an existing token. An owner who may carry none of them gets no token.
 """
 
 from __future__ import annotations
@@ -77,6 +84,7 @@ class CreateRequest:
     lifetime_days: int
     allow_long_lifetime: bool
     organization: str | None
+    all_permitted_scopes: bool = False
 
 
 class PatService:
@@ -148,6 +156,13 @@ class PatService:
             raise ManagementError(
                 400, "invalid_scope", f"scopes not offered for personal tokens: {outside}"
             )
+        all_permitted = body.get("all_permitted_scopes", False)
+        if not isinstance(all_permitted, bool):
+            raise ManagementError(400, "invalid_request", "all_permitted_scopes must be a boolean")
+        if all_permitted and scopes:
+            raise ManagementError(
+                400, "invalid_request", "name scopes or ask for all_permitted_scopes, not both"
+            )
         days, long_ok = _lifetime(body)
         organization = body.get("organization")
         if organization is not None and not isinstance(organization, str):
@@ -159,6 +174,7 @@ class PatService:
             lifetime_days=days,
             allow_long_lifetime=long_ok,
             organization=organization,
+            all_permitted_scopes=all_permitted,
         )
 
     async def create(self, caller: Caller, request: CreateRequest) -> tuple[PatRecord, str]:
@@ -167,8 +183,7 @@ class PatService:
             await self._keycloak.ensure_link(caller)
         except LinkConflict as exc:
             raise ManagementError(409, "link_conflict", str(exc)) from exc
-        for url in request.resources:
-            await self._trial_exchange(caller, self._entry(url), request.scopes, tenant)
+        scopes = await self._granted_scopes(caller, request, tenant)
 
         now = datetime.now(UTC)
         record = PatRecord(
@@ -178,7 +193,7 @@ class PatService:
             owner_sub=caller.subject,
             name=request.name,
             resources=request.resources,
-            scopes=request.scopes,
+            scopes=scopes,
             created_at=now,
             expires_at=now + timedelta(days=request.lifetime_days),
         )
@@ -200,9 +215,45 @@ class PatService:
             raise ManagementError(404, "not_found", "no such token")
         _LOG.info({"event": "pat.revoked", "pat_id": str(parsed)})
 
+    async def _granted_scopes(
+        self, caller: Caller, request: CreateRequest, tenant: str
+    ) -> tuple[str, ...]:
+        """The token's set: the requested one, or every offered scope the owner may carry.
+
+        One trial exchange per resource. A named set must be granted whole at
+        every resource; with ``all_permitted_scopes`` the set is what every
+        resource granted.
+        """
+
+        if not request.all_permitted_scopes:
+            for url in request.resources:
+                granted = await self._trial_exchange(
+                    caller, self._entry(url), request.scopes, tenant
+                )
+                missing = [s for s in request.scopes if s not in granted]
+                if missing:
+                    raise ManagementError(
+                        403,
+                        "insufficient_scope",
+                        f"the owner may not carry {missing} at {url!r}",
+                    )
+            return request.scopes
+
+        permitted = self._pat.scopes
+        for url in request.resources:
+            granted = await self._trial_exchange(caller, self._entry(url), permitted, tenant)
+            permitted = tuple(s for s in permitted if s in granted)
+        if not permitted:
+            raise ManagementError(
+                403,
+                "insufficient_scope",
+                "the owner may carry none of the scopes offered for personal tokens",
+            )
+        return permitted
+
     async def _trial_exchange(
         self, caller: Caller, entry: ResourceEntry, scopes: tuple[str, ...], tenant: str
-    ) -> None:
+    ) -> set[str]:
         response = await self._keycloak.jwt_bearer_grant(
             client_id=entry.pat_client_id,
             client_secret=entry.pat_client_secret,
@@ -217,14 +268,7 @@ class PatService:
                 f"the token issuer refused a trial exchange for {entry.url!r}: "
                 f"{payload.get('error')}: {payload.get('error_description')}",
             )
-        granted = set(str(payload.get("scope", "")).split())
-        missing = [s for s in scopes if s not in granted]
-        if missing:
-            raise ManagementError(
-                403,
-                "insufficient_scope",
-                f"the owner may not carry {missing} at {entry.url!r}",
-            )
+        return set(str(payload.get("scope", "")).split())
 
     # --- exchange ---------------------------------------------------------
     async def exchange(

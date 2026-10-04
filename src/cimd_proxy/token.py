@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from .config import ProxyConfig, ResourceEntry
 from .correlation import bind_correlation_id
 from .envelope import EnvelopeCodec, EnvelopeError, RefreshEnvelope
-from .errors import InvalidGrant, InvalidRequest, OAuthError, ServerError
+from .errors import InvalidGrant, InvalidRequest, OAuthError, ServerError, UnsupportedGrantType
 from .logging_setup import get_logger
 from .pat import TOKEN_EXCHANGE, PatService
 from .pkce import verify_challenge
@@ -94,7 +94,11 @@ async def token(  # noqa: PLR0913 - OAuth token params are what they are
         allowed = "'authorization_code' or 'refresh_token'"
         if pat_service is not None:
             allowed = f"'authorization_code', 'refresh_token' or '{TOKEN_EXCHANGE}'"
-        raise InvalidRequest(f"grant_type must be {allowed}, got {grant_type!r}")
+        if not grant_type:
+            raise InvalidRequest(f"missing grant_type; supported: {allowed}")
+        # RFC 6749 section 5.2: a well-formed request for a grant this server does
+        # not offer is `unsupported_grant_type`, not a malformed request.
+        raise UnsupportedGrantType(f"grant_type must be {allowed}, got {grant_type!r}")
     except OAuthError as exc:
         safe_grant = (
             (grant_type or "").replace("\r", "\\r").replace("\n", "\\n").replace("\x00", "\\0")

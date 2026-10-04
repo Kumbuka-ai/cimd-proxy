@@ -458,6 +458,21 @@ def test_set_beyond_the_owner_cannot_be_created(world: World) -> None:
     assert _create(world, "bob", scopes=["set-memory"]).status_code == 201
 
 
+def test_all_permitted_scopes_are_what_the_upstream_grants(world: World) -> None:
+    """Without a named set, the token carries every offered set its owner may hold."""
+
+    bob = _create(world, "bob", all_permitted_scopes=True)
+    assert bob.status_code == 201, bob.text
+    assert bob.json()["scopes"] == ["set-memory"]
+    assert _roles(_exchange(world, bob.json()["token"]).json()["access_token"]) == ["r-memory"]
+    alice = _create(world, "alice", all_permitted_scopes=True)
+    assert alice.json()["scopes"] == ["set-memory", "set-dispatch"]
+    assert _roles(_exchange(world, alice.json()["token"]).json()["access_token"]) == [
+        "dispatch-executor",
+        "r-memory",
+    ]
+
+
 def test_disabled_owner_gets_no_token(world: World) -> None:
     token = _create(world, "carol", scopes=["set-memory"]).json()["token"]
     uid = world.user_id("carol")
@@ -602,3 +617,249 @@ def test_rotation_new_key_works_removed_key_does_not(world: World) -> None:
         assert refused.status_code == 400, refused.text
         assert refused.json()["error"] == "invalid_grant"
     assert _exchange(world, token).status_code == 200  # key-b still works
+
+
+# --- the identity link (KeycloakClient.ensure_link) against the real admin API ---
+
+
+def _new_member(world: World, username: str) -> str:
+    """A fresh user in tenant-a, so no earlier test has linked it."""
+
+    world.admin(
+        "POST",
+        f"/{REALM}/users",
+        json={
+            "username": username,
+            "enabled": True,
+            "email": f"{username}@example.test",
+            "emailVerified": True,
+            "firstName": username,
+            "lastName": "Probe",
+            "credentials": [{"type": "password", "value": "pw", "temporary": False}],
+        },
+    )
+    _add_member(world, "tenant-a", username)
+    return world.user_id(username)
+
+
+def _links(world: World, user_id: str) -> list[dict]:
+    return world.admin("GET", f"/{REALM}/users/{user_id}/federated-identity").json()
+
+
+def _keycloak_client(world: World):
+    from cimd_proxy.keycloak import KeycloakClient
+
+    return KeycloakClient(
+        realm_issuer=world.realm_issuer,
+        admin_client_id="cimd-proxy-admin",
+        admin_client_secret="it-admin-secret",
+        idp_alias="cimd-proxy-pat",
+    )
+
+
+def test_link_names_the_caller_and_only_the_caller(world: World) -> None:
+    """Creating a token links exactly its owner, under the owner's own id."""
+
+    uid = _new_member(world, f"link-{uuid.uuid4().hex[:6]}")
+    bystander = _new_member(world, f"bystander-{uuid.uuid4().hex[:6]}")
+    username = world.admin("GET", f"/{REALM}/users/{uid}").json()["username"]
+    assert _links(world, uid) == []
+
+    r = _create(world, username)
+    assert r.status_code == 201, r.text
+    links = _links(world, uid)
+    assert [(link["identityProvider"], link["userId"]) for link in links] == [
+        ("cimd-proxy-pat", uid)
+    ]
+    assert _links(world, bystander) == []
+
+    # A second creation finds the link and leaves it as it is.
+    assert _create(world, username).status_code == 201
+    assert _links(world, uid) == links
+
+
+def test_a_foreign_link_of_the_caller_is_a_conflict(world: World) -> None:
+    """An owner already linked under another id gets 409, and the link is not rewritten."""
+
+    import asyncio
+
+    from cimd_proxy.keycloak import Caller, LinkConflict
+
+    username = f"linked-{uuid.uuid4().hex[:6]}"
+    uid = _new_member(world, username)
+    world.admin(
+        "POST",
+        f"/{REALM}/users/{uid}/federated-identity/cimd-proxy-pat",
+        json={"identityProvider": "cimd-proxy-pat", "userId": "someone-else", "userName": "x"},
+    )
+
+    r = _create(world, username)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "link_conflict"
+    assert "token" not in r.json()
+    with world.proxy() as c:
+        listed = c.get(
+            "/pat/tokens", headers={"Authorization": f"Bearer {world.owner_token(username)}"}
+        )
+    assert listed.json()["tokens"] == []
+    assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
+
+    client = _keycloak_client(world)
+    caller = Caller(subject=uid, username=username, organizations=("tenant-a",))
+    link = client.ensure_link(caller)
+    with pytest.raises(LinkConflict):
+        asyncio.run(link)
+    assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
+
+
+def test_no_management_call_links_another_user(world: World) -> None:
+    """The caller is whoever the bearer token says; nothing in a request names anybody else."""
+
+    caller = f"caller-{uuid.uuid4().hex[:6]}"
+    _new_member(world, caller)
+    victim = _new_member(world, f"victim-{uuid.uuid4().hex[:6]}")
+    victim_name = world.admin("GET", f"/{REALM}/users/{victim}").json()["username"]
+
+    # Every field a request could use to name another user, on every endpoint.
+    naming_the_victim = {
+        "owner": victim,
+        "owner_sub": victim,
+        "sub": victim,
+        "userId": victim,
+        "username": victim_name,
+    }
+    headers = {
+        "Authorization": f"Bearer {world.owner_token(caller)}",
+        "X-Forwarded-User": victim,
+    }
+    body = {"name": "agent", "resources": [RES_X], "scopes": [], **naming_the_victim}
+    with world.proxy() as c:
+        r = c.post("/pat/tokens", json=body, headers=headers)
+        assert r.status_code == 201, r.text
+        assert c.get("/pat/tokens", headers=headers, params={"sub": victim}).status_code == 200
+        assert c.delete(f"/pat/tokens/{victim}", headers=headers).status_code == 404
+
+    assert _links(world, victim) == []
+    caller_links = _links(world, world.user_id(caller))
+    assert [link["userId"] for link in caller_links] == [world.user_id(caller)]
+
+
+# --- pat-create over a real browser sign-in (authorization code at Keycloak) ---
+
+
+class _ToLoopback(httpx.HTTPTransport):
+    """Send requests for the proxy's public name to 127.0.0.1, where it listens.
+
+    The proxy's public URL is the name Keycloak reaches it by from inside its
+    container (``host.docker.internal``); the host running the test reaches the
+    same server on the loopback address. Only the connection target changes.
+    """
+
+    def __init__(self, public_host: str) -> None:
+        super().__init__()
+        self._public_host = public_host
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == self._public_host:
+            request.url = request.url.copy_with(host="127.0.0.1")
+        return super().handle_request(request)
+
+
+class _KeycloakBrowser:
+    """Follows the sign-in the way a browser does, filling Keycloak's login form."""
+
+    def __init__(self, transport: httpx.BaseTransport, username: str) -> None:
+        self.http = httpx.Client(transport=transport, follow_redirects=False, timeout=30)
+        self.username = username
+        # Keycloak marks its login cookies Secure; a browser sends them to
+        # http://localhost as a secure context, httpx's cookie jar does not. So the
+        # cookies are carried by hand, name and value, to every request.
+        self.cookies: dict[str, str] = {}
+
+    def _send(self, method: str, url: str, **kw) -> httpx.Response:
+        headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in self.cookies.items())}
+        response = self.http.request(method, url, headers=headers, **kw)
+        for line in response.headers.get_list("set-cookie"):
+            name, _, rest = line.partition("=")
+            value = rest.split(";", 1)[0]
+            if value and "max-age=0" not in line.lower():
+                self.cookies[name.strip()] = value
+            else:
+                self.cookies.pop(name.strip(), None)
+        return response
+
+    def __call__(self, url: str) -> None:
+        import html
+        import re
+
+        response = self._send("GET", url)
+        for _ in range(10):
+            if response.status_code in (301, 302, 303):
+                response = self._send("GET", response.headers["location"])
+                continue
+            if response.status_code != 200:
+                raise AssertionError(
+                    f"sign-in stopped at HTTP {response.status_code} on "
+                    f"{response.request.url.copy_with(query=None)}: "
+                    + " ".join(re.sub(r"<[^>]+>", " ", response.text).split())[-400:]
+                )
+            form = re.search(r'<form[^>]*action="([^"]+)"', response.text)
+            if form is None:  # the loopback listener's own page: the sign-in is done
+                return
+            fields = {"username": self.username, "credentialId": ""}
+            if 'name="password"' in response.text:
+                fields["password"] = "pw"
+            response = self._send("POST", html.unescape(form.group(1)), data=fields)
+        raise AssertionError("the sign-in did not finish")
+
+
+def test_pat_create_over_a_real_interactive_sign_in(world: World, capsys, monkeypatch) -> None:
+    """The token of the interactive path -- authorization code at Keycloak, through the
+    proxy -- is one /pat/tokens accepts, and pat-create turns it into a working token."""
+
+    from cimd_proxy import pat_cli
+
+    public = httpx.URL(world.env["PROXY_PUBLIC_URL"])
+    # The proxy's public name here is plain http on host.docker.internal, which the
+    # command would refuse; for this test that name is the loopback it stands for.
+    is_loopback = pat_cli._is_loopback
+    monkeypatch.setattr(pat_cli, "_is_loopback", lambda h: h == public.host or is_loopback(h))
+    world.admin(
+        "POST",
+        f"/{REALM}/clients",
+        json={
+            "clientId": "res-x-interactive",
+            "publicClient": True,
+            "standardFlowEnabled": True,
+            "directAccessGrantsEnabled": False,
+            "redirectUris": [f"{public}/callback"],
+            "attributes": {"pkce.code.challenge.method": "S256"},
+        },
+    )
+    org_scope = next(
+        s["id"]
+        for s in world.admin("GET", f"/{REALM}/client-scopes").json()
+        if s["name"] == "organization"
+    )
+    cid = world.admin.id_of("clients", clientId="res-x-interactive")
+    world.admin("DELETE", f"/{REALM}/clients/{cid}/optional-client-scopes/{org_scope}")
+    world.admin("PUT", f"/{REALM}/clients/{cid}/default-client-scopes/{org_scope}")
+
+    transport = _ToLoopback(public.host)
+    with httpx.Client(transport=transport, timeout=30) as http:
+        rc = pat_cli.create_main(
+            ["--proxy", str(public), "--resource", RES_X, "--name", "cli", "--timeout", "60"],
+            http=http,
+            open_browser=_KeycloakBrowser(transport, "bob"),
+        )
+    out, err = capsys.readouterr()
+    assert rc == 0, err
+    token = out.strip()
+    assert out == token + "\n"
+    assert "set-memory" in err
+    assert "tenant-a" in err
+    # Bob holds r-memory only: without --set the token carries exactly set-memory.
+    exchanged = _exchange(world, token)
+    assert exchanged.status_code == 200, exchanged.text
+    assert _roles(exchanged.json()["access_token"]) == ["r-memory"]
+    assert _claims(exchanged.json()["access_token"])["organization"] == ["tenant-a"]

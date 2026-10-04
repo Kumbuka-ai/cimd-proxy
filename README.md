@@ -60,8 +60,9 @@ that path the proxy does more, all of it named here:
   token.
 - It **verifies** the owner's own access token at the management endpoints, by
   asking the provider (token introspection) rather than by parsing it.
-- It **signs** one thing: a 60-second assertion for the JWT Authorization Grant
-  (RFC 7523), verified by the provider against the proxy's published keys. The
+- It **signs** one thing: an assertion for the JWT Authorization Grant
+  (RFC 7523), valid for at most 60 seconds and verified by the provider against
+  the proxy's published keys. The
   access token an agent receives is issued by the provider, never by the proxy.
 - It **reads** the provider's token response on this path in two places: it
   drops a `refresh_token`, and when a personal access token is created it reads
@@ -137,6 +138,36 @@ curl -s https://auth.example.com/token \
 # -> {"access_token": "…", "expires_in": 300, "issued_token_type": "…access_token"}
 ```
 
+### From a terminal: `pat-create`
+
+The package ships three commands that do the owner's part without curl. Each
+one signs in through the proxy in a browser, exactly as an MCP client does --
+dynamic registration with a loopback redirect on `127.0.0.1`, PKCE S256, a
+checked `state` and `iss` -- and uses the access token of that sign-in for one
+management call, in memory only.
+
+```bash
+pipx install "git+https://github.com/Kumbuka-ai/cimd-proxy@v0.6.0"   # or: uvx --from … pat-create
+pat-create --resource https://mcp.example.com/mcp --name nightly-agent > nightly.pat
+pat-create --resource https://mcp.example.com/mcp --name reader --set agent-read --expires-in-days 30
+pat-list   --resource https://mcp.example.com/mcp
+pat-revoke --resource https://mcp.example.com/mcp 7c4e…
+```
+
+- Without `--set` the token carries every permission set its owner may hold
+  (`"all_permitted_scopes": true`); each `--set` narrows it to the sets named.
+- The token is printed on stdout once, and nowhere else; what was created is
+  described on stderr. No command takes a secret as an argument.
+- The proxy is found from the resource's protected resource metadata
+  (RFC 9728); `--proxy` or `CIMD_PAT_PROXY` names it instead, and
+  `CIMD_PAT_RESOURCE` can stand in for `--resource`.
+- `--organization` picks the organization when the owner has several,
+  `--no-browser` prints the sign-in URL instead of opening it, and
+  `--login-scope` (default `openid`) is the scope of the sign-in.
+- The commands import only the standard library and `httpx`, none of the
+  server's dependencies; `python -m cimd_proxy.pat_cli create|list|revoke …`
+  is the same as the three scripts.
+
 The rules:
 
 - Expiry is mandatory: 90 days by default, anything above 365 days only with
@@ -144,6 +175,11 @@ The rules:
 - A permission set may contain only scopes listed in `PAT_SCOPES`, and only
   scopes the owner may carry: at creation the proxy performs a trial exchange
   and refuses the token if the provider withholds any requested scope.
+- Instead of naming a set, a creation may send `"all_permitted_scopes": true`:
+  the trial exchange then asks for every scope in `PAT_SCOPES`, and the token's
+  set is what the provider grants at every named resource, stored as a fixed
+  list. A role the owner gains later does not widen it; an owner who may carry
+  none of them gets no token.
 - A token of an owner in one organization is bound to it; the exchange
   requests exactly that organization, so it never comes back naming another.
 - Management needs a token from an interactive sign-in. A token obtained from
@@ -162,7 +198,7 @@ permission set — and how keys are rotated is in `deploy/README.md`.
 ```bash
 cp deploy/.env.example deploy.env
 # edit deploy.env — public URL, a fresh secret key, your upstream, your resources
-docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.2.1
+docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.6.0
 curl -s http://127.0.0.1:8080/.well-known/oauth-authorization-server
 ```
 

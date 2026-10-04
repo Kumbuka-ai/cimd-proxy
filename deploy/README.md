@@ -88,8 +88,11 @@ needs the equivalent of each item.
    requested scopes; a scope whose roles the owner does not hold is withheld.
 4. **Organizations:** attach the `organization` client scope to the client in
    step 2 as optional. Every token is bound to one organization of its owner
-   and requests `organization:<alias>`; without the scope on the client the
-   exchange fails with `invalid_scope` rather than issuing an unbound token. An
+   and the exchange requests `organization:<alias>`. What happens when the
+   scope is missing from the client is decided by the provider, not by the
+   proxy: Keycloak 26.7 answers such a request with `invalid_scope` (measured,
+   `measurements/jwt-authorization-grant/`), so no token is issued at all
+   rather than one without the organization claim. An
    owner who belongs to no organization gets no token
    (`403 organization_required`), and a stored token without one is never
    exchanged.
@@ -142,6 +145,46 @@ The migrations grant the runtime role `SELECT` and `INSERT` on the token table,
 `UPDATE` on two columns (`last_used_at`, `revoked_at`) and `SELECT` on the
 Flyway history; no delete, no DDL. The proxy refuses to start while the
 history is behind the code.
+
+**Why the token table carries no row-level security.** The table holds tokens
+of every organization, and no policy narrows it to one. That is deliberate:
+the exchange looks a token up by its hash *before* the organization is known
+-- the presenter of a personal access token is not signed in, and the token's
+organization is something the row says, not something the request brings. A
+policy keyed on a session's organization would have nothing to key on at that
+point. The binding to an organization is carried instead by the row and the
+code around it: the `tenant` column, which the `CHECK (tenant <> '')`
+constraint of `V1__personal_access_token.sql` keeps from ever being empty; the
+creation, which sets it only to an organization the owner's own token names
+(`cimd_proxy.pat._tenant_for`); and the exchange, which refuses a row without
+one and requests exactly `organization:<tenant>` from the provider
+(`cimd_proxy.pat.PatService.exchange`). Listing and revoking are bound to the
+owner, not the organization, by the `WHERE` clause of their statements
+(`cimd_proxy.pat_store`). The migration still refuses a runtime role with
+`BYPASSRLS` (`CP002`), so a policy added later could not be silently bypassed.
+
+### The first token: `pat-create`
+
+`pat-create` (see the main README) signs the owner in through the proxy's
+ordinary interactive path and creates the token with the access token it gets
+there. It needs nothing in the identity provider beyond what the steps above
+and every MCP client already need, and in particular no redirect URI for it:
+the provider redirects to the proxy's `/callback`, and only the proxy redirects
+on to the command's loopback listener. For the management call to be accepted,
+the access token of that sign-in has to
+
+- come from the realm in `PAT_REALM_ISSUER` -- so name a resource that accepts
+  personal access tokens, whose issuer is that realm by configuration;
+- carry a `sid` -- every token from an interactive sign-in does;
+- name the owner's organizations in `organization` -- the resource's
+  interactive client (`RESOURCE_n_CLIENT_ID`) needs the `organization` client
+  scope, as a default scope or, as an optional one, requested with
+  `--login-scope "openid organization"`;
+- be introspectable by the admin client (step 5 above).
+
+The command requests `scope=openid` by default rather than the proxy's
+`PROXY_DEFAULT_SCOPE`, so the sign-in does not open an offline session in the
+provider for a token that is used once.
 
 ### Smoke test
 
