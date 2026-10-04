@@ -122,9 +122,18 @@ class TestTokenAuthCode:
         assert r.json()["error"] == "invalid_grant"
 
     def test_unknown_grant_refused(self, client: TestClient) -> None:
+        # RFC 6749 section 5.2: a grant type the server does not support is
+        # `unsupported_grant_type`, not a malformed request.
         r = client.post("/token", data={"grant_type": "client_credentials"})
         assert r.status_code == 400
+        assert r.json()["error"] == "unsupported_grant_type"
+        assert "client_credentials" in r.json()["error_description"]
+
+    def test_missing_grant_type_is_a_malformed_request(self, client: TestClient) -> None:
+        r = client.post("/token", data={"code": "x"})
+        assert r.status_code == 400
         assert r.json()["error"] == "invalid_request"
+        assert "grant_type" in r.json()["error_description"]
 
 
 class TestTokenRefresh:

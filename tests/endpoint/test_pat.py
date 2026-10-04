@@ -350,12 +350,13 @@ class TestDiscoveryAndJwks:
     def test_exchange_grant_is_unknown_without_configuration(self, client: TestClient) -> None:
         r = client.post("/token", data={"grant_type": TOKEN_EXCHANGE, "subject_token": "x"})
         assert r.status_code == 400
-        assert r.json()["error"] == "invalid_request"
+        assert r.json()["error"] == "unsupported_grant_type"
 
     def test_unknown_grant_names_the_exchange_when_configured(self, pat) -> None:
         client, _, _ = pat
         r = client.post("/token", data={"grant_type": "client_credentials"})
         assert r.status_code == 400
+        assert r.json()["error"] == "unsupported_grant_type"
         assert TOKEN_EXCHANGE in r.json()["error_description"]
 
 

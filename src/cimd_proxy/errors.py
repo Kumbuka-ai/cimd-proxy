@@ -57,6 +57,13 @@ class InvalidGrant(OAuthError):
         super().__init__(error="invalid_grant", description=description, status_code=400)
 
 
+class UnsupportedGrantType(OAuthError):
+    """RFC 6749 section 5.2: the server does not support this grant type."""
+
+    def __init__(self, description: str) -> None:
+        super().__init__(error="unsupported_grant_type", description=description, status_code=400)
+
+
 class ServerError(OAuthError):
     def __init__(self, description: str) -> None:
         super().__init__(error="server_error", description=description, status_code=502)

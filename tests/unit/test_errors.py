@@ -12,6 +12,7 @@ from cimd_proxy.errors import (
     ServerError,
     TemporarilyUnavailable,
     UnauthorizedClient,
+    UnsupportedGrantType,
 )
 
 
@@ -33,7 +34,13 @@ class TestOAuthErrors:
         assert issubclass(InvalidGrant, OAuthError)
         assert issubclass(ServerError, OAuthError)
         assert issubclass(TemporarilyUnavailable, OAuthError)
+        assert issubclass(UnsupportedGrantType, OAuthError)
 
     def test_server_and_temp_are_5xx(self) -> None:
         assert ServerError("boom").status_code == 502
         assert TemporarilyUnavailable("later").status_code == 503
+
+
+def test_unsupported_grant_type_shape() -> None:
+    e = UnsupportedGrantType("no such grant")
+    assert (e.error, e.status_code) == ("unsupported_grant_type", 400)
