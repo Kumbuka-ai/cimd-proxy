@@ -127,6 +127,83 @@ class TestCreate:
         assert store.rows == {}
 
 
+def _granting(**granted_by_client: str):
+    """A fake upstream that grants, per PAT client, only the listed scopes (plus the org)."""
+
+    def respond(grant):
+        allowed = set(granted_by_client[grant.client_id].split())
+        kept = [s for s in grant.scope.split() if s in allowed or s.startswith("organization:")]
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "t",
+                "token_type": "Bearer",
+                "expires_in": 300,
+                "scope": " ".join(kept),
+            },
+        )
+
+    return respond
+
+
+class TestAllPermittedScopes:
+    def test_the_set_is_what_the_owner_may_carry(self, pat) -> None:
+        client, store, keycloak = pat
+        keycloak.respond = _granting(**{"log-mcp-pat": "set-memory"})
+        r = _create(client, scopes=[], all_permitted_scopes=True)
+        assert r.status_code == 201, r.text
+        assert r.json()["scopes"] == ["set-memory"]
+        assert keycloak.grants[-1].scope == "set-memory set-dispatch organization:tenant-a"
+        token = r.json()["token"]
+        assert store.rows[token_hash(token)].scopes == ("set-memory",)
+        keycloak.respond = _granting(**{"log-mcp-pat": "set-memory set-dispatch"})
+        assert _exchange(client, token).status_code == 200
+        # A right gained later does not widen an existing token.
+        assert keycloak.grants[-1].scope == "set-memory organization:tenant-a"
+
+    def test_every_offered_scope_when_the_owner_holds_all(self, pat) -> None:
+        client, _, _ = pat
+        r = _create(client, scopes=[], all_permitted_scopes=True)
+        assert r.json()["scopes"] == ["set-memory", "set-dispatch"]
+
+    def test_several_resources_keep_what_all_of_them_grant(self, pat) -> None:
+        client, _, keycloak = pat
+        keycloak.respond = _granting(
+            **{"log-mcp-pat": "set-memory set-dispatch", "wlm-mcp-pat": "set-dispatch"}
+        )
+        r = _create(
+            client,
+            scopes=[],
+            resources=["https://log.example", "https://wlm.example"],
+            all_permitted_scopes=True,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["scopes"] == ["set-dispatch"]
+
+    def test_an_owner_who_may_carry_none_gets_no_token(self, pat) -> None:
+        client, store, keycloak = pat
+        keycloak.respond = _granting(**{"log-mcp-pat": ""})
+        r = _create(client, scopes=[], all_permitted_scopes=True)
+        assert r.status_code == 403
+        assert r.json()["error"] == "insufficient_scope"
+        assert store.rows == {}
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"scopes": ["set-memory"], "all_permitted_scopes": True},
+            {"scopes": [], "all_permitted_scopes": "yes"},
+        ],
+    )
+    def test_malformed_requests_are_refused(self, pat, body) -> None:
+        client, store, keycloak = pat
+        r = _create(client, **body)
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_request"
+        assert store.rows == {}
+        assert keycloak.grants == []
+
+
 class TestTenant:
     def test_single_organization_binds_the_token(self, pat) -> None:
         client, _, keycloak = pat

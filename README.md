@@ -145,6 +145,11 @@ The rules:
 - A permission set may contain only scopes listed in `PAT_SCOPES`, and only
   scopes the owner may carry: at creation the proxy performs a trial exchange
   and refuses the token if the provider withholds any requested scope.
+- Instead of naming a set, a creation may send `"all_permitted_scopes": true`:
+  the trial exchange then asks for every scope in `PAT_SCOPES`, and the token's
+  set is what the provider grants at every named resource, stored as a fixed
+  list. A role the owner gains later does not widen it; an owner who may carry
+  none of them gets no token.
 - A token of an owner in one organization is bound to it; the exchange
   requests exactly that organization, so it never comes back naming another.
 - Management needs a token from an interactive sign-in. A token obtained from

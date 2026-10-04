@@ -458,6 +458,21 @@ def test_set_beyond_the_owner_cannot_be_created(world: World) -> None:
     assert _create(world, "bob", scopes=["set-memory"]).status_code == 201
 
 
+def test_all_permitted_scopes_are_what_the_upstream_grants(world: World) -> None:
+    """Without a named set, the token carries every offered set its owner may hold."""
+
+    bob = _create(world, "bob", all_permitted_scopes=True)
+    assert bob.status_code == 201, bob.text
+    assert bob.json()["scopes"] == ["set-memory"]
+    assert _roles(_exchange(world, bob.json()["token"]).json()["access_token"]) == ["r-memory"]
+    alice = _create(world, "alice", all_permitted_scopes=True)
+    assert alice.json()["scopes"] == ["set-memory", "set-dispatch"]
+    assert _roles(_exchange(world, alice.json()["token"]).json()["access_token"]) == [
+        "dispatch-executor",
+        "r-memory",
+    ]
+
+
 def test_disabled_owner_gets_no_token(world: World) -> None:
     token = _create(world, "carol", scopes=["set-memory"]).json()["token"]
     uid = world.user_id("carol")
