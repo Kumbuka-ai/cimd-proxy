@@ -602,3 +602,129 @@ def test_rotation_new_key_works_removed_key_does_not(world: World) -> None:
         assert refused.status_code == 400, refused.text
         assert refused.json()["error"] == "invalid_grant"
     assert _exchange(world, token).status_code == 200  # key-b still works
+
+
+# --- the identity link (KeycloakClient.ensure_link) against the real admin API ---
+
+
+def _new_member(world: World, username: str) -> str:
+    """A fresh user in tenant-a, so no earlier test has linked it."""
+
+    world.admin(
+        "POST",
+        f"/{REALM}/users",
+        json={
+            "username": username,
+            "enabled": True,
+            "email": f"{username}@example.test",
+            "emailVerified": True,
+            "firstName": username,
+            "lastName": "Probe",
+            "credentials": [{"type": "password", "value": "pw", "temporary": False}],
+        },
+    )
+    _add_member(world, "tenant-a", username)
+    return world.user_id(username)
+
+
+def _links(world: World, user_id: str) -> list[dict]:
+    return world.admin("GET", f"/{REALM}/users/{user_id}/federated-identity").json()
+
+
+def _keycloak_client(world: World):
+    from cimd_proxy.keycloak import KeycloakClient
+
+    return KeycloakClient(
+        realm_issuer=world.realm_issuer,
+        admin_client_id="cimd-proxy-admin",
+        admin_client_secret="it-admin-secret",
+        idp_alias="cimd-proxy-pat",
+    )
+
+
+def test_link_names_the_caller_and_only_the_caller(world: World) -> None:
+    """Creating a token links exactly its owner, under the owner's own id."""
+
+    uid = _new_member(world, f"link-{uuid.uuid4().hex[:6]}")
+    bystander = _new_member(world, f"bystander-{uuid.uuid4().hex[:6]}")
+    username = world.admin("GET", f"/{REALM}/users/{uid}").json()["username"]
+    assert _links(world, uid) == []
+
+    r = _create(world, username)
+    assert r.status_code == 201, r.text
+    links = _links(world, uid)
+    assert [(link["identityProvider"], link["userId"]) for link in links] == [
+        ("cimd-proxy-pat", uid)
+    ]
+    assert _links(world, bystander) == []
+
+    # A second creation finds the link and leaves it as it is.
+    assert _create(world, username).status_code == 201
+    assert _links(world, uid) == links
+
+
+def test_a_foreign_link_of_the_caller_is_a_conflict(world: World) -> None:
+    """An owner already linked under another id gets 409, and the link is not rewritten."""
+
+    import asyncio
+
+    from cimd_proxy.keycloak import Caller, LinkConflict
+
+    username = f"linked-{uuid.uuid4().hex[:6]}"
+    uid = _new_member(world, username)
+    world.admin(
+        "POST",
+        f"/{REALM}/users/{uid}/federated-identity/cimd-proxy-pat",
+        json={"identityProvider": "cimd-proxy-pat", "userId": "someone-else", "userName": "x"},
+    )
+
+    r = _create(world, username)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "link_conflict"
+    assert "token" not in r.json()
+    with world.proxy() as c:
+        listed = c.get(
+            "/pat/tokens", headers={"Authorization": f"Bearer {world.owner_token(username)}"}
+        )
+    assert listed.json()["tokens"] == []
+    assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
+
+    with pytest.raises(LinkConflict):
+        asyncio.run(
+            _keycloak_client(world).ensure_link(
+                Caller(subject=uid, username=username, organizations=("tenant-a",))
+            )
+        )
+    assert [link["userId"] for link in _links(world, uid)] == ["someone-else"]
+
+
+def test_no_management_call_links_another_user(world: World) -> None:
+    """The caller is whoever the bearer token says; nothing in a request names anybody else."""
+
+    caller = f"caller-{uuid.uuid4().hex[:6]}"
+    _new_member(world, caller)
+    victim = _new_member(world, f"victim-{uuid.uuid4().hex[:6]}")
+    victim_name = world.admin("GET", f"/{REALM}/users/{victim}").json()["username"]
+
+    # Every field a request could use to name another user, on every endpoint.
+    naming_the_victim = {
+        "owner": victim,
+        "owner_sub": victim,
+        "sub": victim,
+        "userId": victim,
+        "username": victim_name,
+    }
+    headers = {
+        "Authorization": f"Bearer {world.owner_token(caller)}",
+        "X-Forwarded-User": victim,
+    }
+    body = {"name": "agent", "resources": [RES_X], "scopes": [], **naming_the_victim}
+    with world.proxy() as c:
+        r = c.post("/pat/tokens", json=body, headers=headers)
+        assert r.status_code == 201, r.text
+        assert c.get("/pat/tokens", headers=headers, params={"sub": victim}).status_code == 200
+        assert c.delete(f"/pat/tokens/{victim}", headers=headers).status_code == 404
+
+    assert _links(world, victim) == []
+    caller_links = _links(world, world.user_id(caller))
+    assert [link["userId"] for link in caller_links] == [world.user_id(caller)]
