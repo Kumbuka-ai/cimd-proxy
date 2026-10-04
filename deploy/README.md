@@ -163,6 +163,29 @@ owner, not the organization, by the `WHERE` clause of their statements
 (`cimd_proxy.pat_store`). The migration still refuses a runtime role with
 `BYPASSRLS` (`CP002`), so a policy added later could not be silently bypassed.
 
+### The first token: `pat-create`
+
+`pat-create` (see the main README) signs the owner in through the proxy's
+ordinary interactive path and creates the token with the access token it gets
+there. It needs nothing in the identity provider beyond what the steps above
+and every MCP client already need, and in particular no redirect URI for it:
+the provider redirects to the proxy's `/callback`, and only the proxy redirects
+on to the command's loopback listener. For the management call to be accepted,
+the access token of that sign-in has to
+
+- come from the realm in `PAT_REALM_ISSUER` -- so name a resource that accepts
+  personal access tokens, whose issuer is that realm by configuration;
+- carry a `sid` -- every token from an interactive sign-in does;
+- name the owner's organizations in `organization` -- the resource's
+  interactive client (`RESOURCE_n_CLIENT_ID`) needs the `organization` client
+  scope, as a default scope or, as an optional one, requested with
+  `--login-scope "openid organization"`;
+- be introspectable by the admin client (step 5 above).
+
+The command requests `scope=openid` by default rather than the proxy's
+`PROXY_DEFAULT_SCOPE`, so the sign-in does not open an offline session in the
+provider for a token that is used once.
+
 ### Smoke test
 
 `deploy/pat-smoke.sh` runs a token end to end against a live deployment:

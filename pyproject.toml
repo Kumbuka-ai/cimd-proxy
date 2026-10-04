@@ -25,6 +25,9 @@ dependencies = [
 
 [project.scripts]
 cimd-proxy = "cimd_proxy.__main__:main"
+pat-create = "cimd_proxy.pat_cli:create"
+pat-list = "cimd_proxy.pat_cli:list_"
+pat-revoke = "cimd_proxy.pat_cli:revoke"
 
 [project.optional-dependencies]
 test = [

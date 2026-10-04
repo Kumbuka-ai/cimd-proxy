@@ -138,6 +138,36 @@ curl -s https://auth.example.com/token \
 # -> {"access_token": "…", "expires_in": 300, "issued_token_type": "…access_token"}
 ```
 
+### From a terminal: `pat-create`
+
+The package ships three commands that do the owner's part without curl. Each
+one signs in through the proxy in a browser, exactly as an MCP client does --
+dynamic registration with a loopback redirect on `127.0.0.1`, PKCE S256, a
+checked `state` and `iss` -- and uses the access token of that sign-in for one
+management call, in memory only.
+
+```bash
+pipx install "git+https://github.com/Kumbuka-ai/cimd-proxy@v0.6.0"   # or: uvx --from … pat-create
+pat-create --resource https://mcp.example.com/mcp --name nightly-agent > nightly.pat
+pat-create --resource https://mcp.example.com/mcp --name reader --set agent-read --expires-in-days 30
+pat-list   --resource https://mcp.example.com/mcp
+pat-revoke --resource https://mcp.example.com/mcp 7c4e…
+```
+
+- Without `--set` the token carries every permission set its owner may hold
+  (`"all_permitted_scopes": true`); each `--set` narrows it to the sets named.
+- The token is printed on stdout once, and nowhere else; what was created is
+  described on stderr. No command takes a secret as an argument.
+- The proxy is found from the resource's protected resource metadata
+  (RFC 9728); `--proxy` or `CIMD_PAT_PROXY` names it instead, and
+  `CIMD_PAT_RESOURCE` can stand in for `--resource`.
+- `--organization` picks the organization when the owner has several,
+  `--no-browser` prints the sign-in URL instead of opening it, and
+  `--login-scope` (default `openid`) is the scope of the sign-in.
+- The commands import only the standard library and `httpx`, none of the
+  server's dependencies; `python -m cimd_proxy.pat_cli create|list|revoke …`
+  is the same as the three scripts.
+
 The rules:
 
 - Expiry is mandatory: 90 days by default, anything above 365 days only with
