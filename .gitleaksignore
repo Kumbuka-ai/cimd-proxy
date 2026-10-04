@@ -1,5 +1,9 @@
 # Findings reviewed and judged not to be secrets. One fingerprint per line,
 # <commit>:<file>:<rule>:<line>, each with its reason above it.
+#
+# EXPIRES: 2027-04-04
+# The one entry below names a commit on a feature branch; once that branch is
+# merged (or squashed away) the entry is moot and can go.
 
 # A fabricated owner token in the CLI test harness: a distinctive string the
 # secret-leak tests search output and files for. It authenticates nothing. The
