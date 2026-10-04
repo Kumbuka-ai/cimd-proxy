@@ -163,7 +163,7 @@ permission set — and how keys are rotated is in `deploy/README.md`.
 ```bash
 cp deploy/.env.example deploy.env
 # edit deploy.env — public URL, a fresh secret key, your upstream, your resources
-docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.2.1
+docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.6.0
 curl -s http://127.0.0.1:8080/.well-known/oauth-authorization-server
 ```
 

@@ -21,6 +21,18 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # The tag names the release; src/cimd_proxy/__init__.py names the version
+      # the wheel and the running app report. An image whose tag and reported
+      # version disagree is refused here rather than published.
+      - name: Tag matches the package version
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/cimd_proxy/__init__.py)"
+          if [ "${tag}" != "v${version}" ]; then
+            echo "tag ${tag} does not match __version__ ${version:-<unreadable>}" >&2
+            exit 1
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 

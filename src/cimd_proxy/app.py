@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.requests import Request
 
+from . import __version__
 from .authorize import router as authorize_router
 from .cache import TtlCache
 from .callback import router as callback_router
@@ -95,7 +96,7 @@ def create_app(
                 await owned_store.close()
 
     app = FastAPI(
-        title="cimd-proxy", version="0.2.1", docs_url=None, redoc_url=None, lifespan=lifespan
+        title="cimd-proxy", version=__version__, docs_url=None, redoc_url=None, lifespan=lifespan
     )
     app.state.config = cfg
     app.state.pat_service = pat_service

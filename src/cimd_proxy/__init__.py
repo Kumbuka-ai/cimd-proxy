@@ -3,4 +3,4 @@
 
 """cimd-proxy: OAuth 2.1 proxy speaking CIMD outward and federating to an OIDC provider."""
 
-__version__ = "0.2.1"
+__version__ = "0.6.0"
