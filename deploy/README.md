@@ -88,8 +88,11 @@ needs the equivalent of each item.
    requested scopes; a scope whose roles the owner does not hold is withheld.
 4. **Organizations:** attach the `organization` client scope to the client in
    step 2 as optional. Every token is bound to one organization of its owner
-   and requests `organization:<alias>`; without the scope on the client the
-   exchange fails with `invalid_scope` rather than issuing an unbound token. An
+   and the exchange requests `organization:<alias>`. What happens when the
+   scope is missing from the client is decided by the provider, not by the
+   proxy: Keycloak 26.7 answers such a request with `invalid_scope` (measured,
+   `measurements/jwt-authorization-grant/`), so no token is issued at all
+   rather than one without the organization claim. An
    owner who belongs to no organization gets no token
    (`403 organization_required`), and a stored token without one is never
    exchanged.
@@ -142,6 +145,23 @@ The migrations grant the runtime role `SELECT` and `INSERT` on the token table,
 `UPDATE` on two columns (`last_used_at`, `revoked_at`) and `SELECT` on the
 Flyway history; no delete, no DDL. The proxy refuses to start while the
 history is behind the code.
+
+**Why the token table carries no row-level security.** The table holds tokens
+of every organization, and no policy narrows it to one. That is deliberate:
+the exchange looks a token up by its hash *before* the organization is known
+-- the presenter of a personal access token is not signed in, and the token's
+organization is something the row says, not something the request brings. A
+policy keyed on a session's organization would have nothing to key on at that
+point. The binding to an organization is carried instead by the row and the
+code around it: the `tenant` column, which the `CHECK (tenant <> '')`
+constraint of `V1__personal_access_token.sql` keeps from ever being empty; the
+creation, which sets it only to an organization the owner's own token names
+(`cimd_proxy.pat._tenant_for`); and the exchange, which refuses a row without
+one and requests exactly `organization:<tenant>` from the provider
+(`cimd_proxy.pat.PatService.exchange`). Listing and revoking are bound to the
+owner, not the organization, by the `WHERE` clause of their statements
+(`cimd_proxy.pat_store`). The migration still refuses a runtime role with
+`BYPASSRLS` (`CP002`), so a policy added later could not be silently bypassed.
 
 ### Smoke test
 

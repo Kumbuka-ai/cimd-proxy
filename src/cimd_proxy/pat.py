@@ -12,11 +12,11 @@ about stays inside the proxy:
    looked up; a mistyped or invented token never reaches the database.
 2. The row is found by the SHA-256 of the token and checked for revocation,
    expiry and the requested resource.
-3. The proxy signs a 60-second assertion naming the owner and presents it to
-   the upstream with the JWT Authorization Grant, requesting exactly the token's
-   client scopes plus ``organization:<tenant>``, so a token created in one
-   organization can never come back naming another (measured: a non-member
-   gets no organization claim at all).
+3. The proxy signs an assertion naming the owner, valid for at most 60
+   seconds, and presents it to the upstream with the JWT Authorization Grant,
+   requesting exactly the token's client scopes plus ``organization:<tenant>``,
+   so a token created in one organization can never come back naming another
+   (measured: a non-member gets no organization claim at all).
 4. A refresh token, should the upstream ever send one, is dropped. The agent
    exchanges again when the short token runs out.
 

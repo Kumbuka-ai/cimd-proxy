@@ -60,8 +60,9 @@ that path the proxy does more, all of it named here:
   token.
 - It **verifies** the owner's own access token at the management endpoints, by
   asking the provider (token introspection) rather than by parsing it.
-- It **signs** one thing: a 60-second assertion for the JWT Authorization Grant
-  (RFC 7523), verified by the provider against the proxy's published keys. The
+- It **signs** one thing: an assertion for the JWT Authorization Grant
+  (RFC 7523), valid for at most 60 seconds and verified by the provider against
+  the proxy's published keys. The
   access token an agent receives is issued by the provider, never by the proxy.
 - It **reads** the provider's token response on this path in two places: it
   drops a `refresh_token`, and when a personal access token is created it reads

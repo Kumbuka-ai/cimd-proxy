@@ -3,13 +3,18 @@
 
 """Storage of personal access tokens.
 
-A row holds the SHA-256 of the token and never the token. Every read and every
-write that acts for a caller carries the caller's realm and subject in its
-``WHERE`` clause, so a user can neither see nor revoke another user's token:
-the restriction lives in the statement, not in a check after it.
+A row holds the SHA-256 of the token and never the token. The management
+statements -- listing and revoking, the ones that act for a signed-in owner --
+carry the owner's realm and subject in their ``WHERE`` clause, so a user can
+neither see nor revoke another user's token: for those, the restriction lives
+in the statement, not in a check after it.
 
-The exchange looks a token up by hash alone, because the hash is the only thing
-a presenter proves; the tenant check happens on the row it returns.
+Two statements carry no owner. The exchange looks a token up by hash alone
+(:meth:`PostgresPatStore.find_by_hash`), because the presenter of a personal
+access token is not signed in and the hash is the only thing it proves; the
+revocation, expiry, realm and organization checks run on the row it returns, in
+:meth:`cimd_proxy.pat.PatService.exchange`. Recording the last use
+(:meth:`PostgresPatStore.touch`) addresses the row that lookup returned, by id.
 """
 
 from __future__ import annotations
