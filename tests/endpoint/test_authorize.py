@@ -512,3 +512,73 @@ class TestAuthorizeDcrRoute:
         )
         assert r.status_code == 400
         assert "invalid_client" in r.text
+
+
+class TestAuthorizeCimdEntryGranularity:
+    """A CIMD entry that fails the shape check is dropped, not the document.
+
+    The Claude Code CLI publishes ``http://localhost/callback`` next to
+    ``http://127.0.0.1/callback``; before the loopback name was admitted, the
+    one entry locked the client out whichever URI it asked for.
+    """
+
+    _CLI_CLIENT_ID = "https://claude.ai/oauth/claude-code-client-metadata"
+
+    @pytest.mark.parametrize(
+        "redirect_uri",
+        ["http://127.0.0.1:56896/callback", "http://localhost:56896/callback"],
+    )
+    def test_cli_document_reaches_upstream(
+        self, client: TestClient, app, redirect_uri: str
+    ) -> None:
+        install_fake_fetcher(
+            app,
+            valid_document(
+                self._CLI_CLIENT_ID, "http://localhost/callback", "http://127.0.0.1/callback"
+            ),
+        )
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(client_id=self._CLI_CLIENT_ID, redirect_uri=redirect_uri),
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text
+        loc = urlparse(r.headers["location"])
+        assert loc.netloc == "issuer.example"
+
+    def test_document_without_usable_entry_refused(self, client: TestClient, app) -> None:
+        install_fake_fetcher(app, valid_document(_CLIENT_ID, "http://example.com/callback"))
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(redirect_uri="http://example.com/callback"),
+            follow_redirects=False,
+        )
+        assert r.status_code == 400
+        assert "error=invalid_client" in r.text
+        assert "http://example.com/callback" in r.text
+        assert "location" not in r.headers
+
+    def test_dropped_entry_is_not_registered(self, client: TestClient, app) -> None:
+        install_fake_fetcher(
+            app, valid_document(_CLIENT_ID, "http://example.com/cb", "https://app.example/cb")
+        )
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(redirect_uri="http://example.com/cb"),
+            follow_redirects=False,
+        )
+        # Refused before step 4 has passed, so no redirect (OAuth 2.1 §4.1.2.1).
+        assert r.status_code == 400
+        assert "redirect_uri is not registered" in r.text
+        assert "location" not in r.headers
+
+    def test_kept_entry_still_reaches_upstream(self, client: TestClient, app) -> None:
+        install_fake_fetcher(
+            app, valid_document(_CLIENT_ID, "http://example.com/cb", "https://app.example/cb")
+        )
+        r = client.get(
+            "/authorize",
+            params=_authorize_params(redirect_uri="https://app.example/cb"),
+            follow_redirects=False,
+        )
+        assert r.status_code == 302, r.text

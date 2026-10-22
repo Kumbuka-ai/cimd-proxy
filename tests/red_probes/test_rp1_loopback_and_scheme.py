@@ -3,7 +3,7 @@
 
 """RP1 — Loopback allowance and non-loopback http rejection (RFC 8252 §7.3 / §8.3).
 
-Four gates measured here, each with an observed red state:
+Five gates measured here, each with an observed red state:
 
 * **loopback allowance** — ``http://127.0.0.1:<port>`` (and ``[::1]``)
   registers 201. Neuter the loopback branch, and it flips to 400.
@@ -14,9 +14,13 @@ Four gates measured here, each with an observed red state:
 * **non-loopback http rejection** — ``http://evil.example/callback`` is
   rejected with ``invalid_redirect_uri``. Neuter the scheme guard, and
   it is admitted with 201.
-* **localhost-name rejection** — ``http://localhost:51580/callback`` is
-  rejected even though the port and path would otherwise be valid.
-  Neuter the loopback-literal check, and it is admitted with 201.
+* **localhost-name allowance** — ``http://localhost:51580/callback``
+  registers 201, as the MCP authorization spec permits. Remove the name
+  from the loopback check, and it flips to 400.
+* **exact localhost name** — ``http://foo.localhost/cb`` and
+  ``http://localhost.example/cb`` are rejected with ``invalid_redirect_uri``.
+  Loosen the name check to a suffix or a substring test, and each is
+  admitted with 201.
 
 Each ``bypass_would_break_*`` control is ``xfail(strict=True)`` so a future
 change that quietly makes the bypass pass again turns the test suite red.
@@ -200,12 +204,26 @@ class TestRP1NonLoopbackHttpRejection:
 
 
 # ---------------------------------------------------------------------------
-# localhost-name rejection — RFC 8252 §8.3 prefers the IP literal
+# localhost-name allowance — the MCP authorization spec admits localhost URLs
 # ---------------------------------------------------------------------------
 
 
-class TestRP1LocalhostRejection:
-    def test_guarded_rejects(self, client: TestClient) -> None:
+def _only_ip_literals(hostname: str | None) -> bool:
+    return hostname in _redirect_uri_mod._LOOPBACK_LITERALS
+
+
+class TestRP1LocalhostAllowance:
+    def test_guarded_admits(self, client: TestClient) -> None:
+        r = client.post(
+            "/register",
+            json={"redirect_uris": ["http://localhost:51580/callback"]},
+        )
+        assert r.status_code == 201, r.text
+
+    def test_bypass_rejects(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Drop the name from the loopback check: only the IP literals remain,
+        # which is the rule before localhost was admitted.
+        monkeypatch.setattr(_redirect_uri_mod, "_is_loopback_host", _only_ip_literals)
         r = client.post(
             "/register",
             json={"redirect_uris": ["http://localhost:51580/callback"]},
@@ -213,42 +231,79 @@ class TestRP1LocalhostRejection:
         assert r.status_code == 400
         assert r.json()["error"] == "invalid_redirect_uri"
 
-    def test_bypass_admits(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Extend the loopback set to include the DNS name 'localhost'; the
-        # http scheme check then passes.
-        monkeypatch.setattr(
-            _redirect_uri_mod,
-            "_LOOPBACK_LITERALS",
-            frozenset({"127.0.0.1", "::1", "localhost"}),
-        )
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "RP1 localhost-allowance red control: with the name dropped from "
+            "the loopback check, the 201 assertion no longer holds."
+        ),
+    )
+    def test_bypass_would_break_allowance(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_redirect_uri_mod, "_is_loopback_host", _only_ip_literals)
         r = client.post(
             "/register",
             json={"redirect_uris": ["http://localhost:51580/callback"]},
         )
         assert r.status_code == 201
 
+
+# ---------------------------------------------------------------------------
+# Exact localhost name — no subdomain, no name that merely contains it
+# ---------------------------------------------------------------------------
+
+
+def _suffix_match(hostname: str | None) -> bool:
+    return _only_ip_literals(hostname) or (hostname or "").endswith("localhost")
+
+
+def _substring_match(hostname: str | None) -> bool:
+    return _only_ip_literals(hostname) or "localhost" in (hostname or "")
+
+
+_LOOSENED = [
+    pytest.param(_suffix_match, "http://foo.localhost/cb", id="endswith"),
+    pytest.param(_substring_match, "http://localhost.example/cb", id="substring"),
+]
+
+
+class TestRP1LocalhostExactName:
+    @pytest.mark.parametrize(
+        "uri", ["http://foo.localhost/cb", "http://localhost.example/cb"]
+    )
+    def test_guarded_rejects(self, client: TestClient, uri: str) -> None:
+        r = client.post("/register", json={"redirect_uris": [uri]})
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_redirect_uri"
+
+    @pytest.mark.parametrize(("loosened", "uri"), _LOOSENED)
+    def test_bypass_admits(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        loosened: Callable[[str | None], bool],
+        uri: str,
+    ) -> None:
+        monkeypatch.setattr(_redirect_uri_mod, "_is_loopback_host", loosened)
+        r = client.post("/register", json={"redirect_uris": [uri]})
+        assert r.status_code == 201
+
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "RP1 localhost-name red control: with 'localhost' added to the "
-            "loopback set, the 400 assertion no longer holds — this is the "
-            "observed red state of the DNS-name rejection."
+            "RP1 exact-name red control: with the name check loosened to a "
+            "suffix or substring test, the 400 assertion no longer holds."
         ),
     )
+    @pytest.mark.parametrize(("loosened", "uri"), _LOOSENED)
     def test_bypass_would_break_rejection(
         self,
-        app_factory: Callable[..., object],
+        client: TestClient,
         monkeypatch: pytest.MonkeyPatch,
+        loosened: Callable[[str | None], bool],
+        uri: str,
     ) -> None:
-        monkeypatch.setattr(
-            _redirect_uri_mod,
-            "_LOOPBACK_LITERALS",
-            frozenset({"127.0.0.1", "::1", "localhost"}),
-        )
-        app = app_factory()
-        client = TestClient(app)  # type: ignore[arg-type]
-        r = client.post(
-            "/register",
-            json={"redirect_uris": ["http://localhost:51580/callback"]},
-        )
+        monkeypatch.setattr(_redirect_uri_mod, "_is_loopback_host", loosened)
+        r = client.post("/register", json={"redirect_uris": [uri]})
         assert r.status_code == 400

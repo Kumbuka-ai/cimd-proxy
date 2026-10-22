@@ -158,22 +158,43 @@ class TestValidateDocument:
         assert result.redirect_uris == ("http://127.0.0.1:51580/callback",)
 
     def test_non_loopback_http_redirect_refused(self) -> None:
-        # A CIMD document listing a non-loopback http URI cannot be used at
-        # /authorize step 4 — refuse at document-validation time rather than
-        # let a bad document sit in cache.
+        # A CIMD document whose only entry fails the shape check has nothing
+        # usable at /authorize step 4 — refused, and the refusal names the
+        # dropped entry.
         url = "https://claude.ai/mcp"
         doc = {
             "client_id": url,
-            "redirect_uris": ["http://evil.example/callback"],
+            "redirect_uris": ["http://example.com/callback"],
         }
-        with pytest.raises(DocumentInvalid, match="https"):
+        with pytest.raises(DocumentInvalid, match="http://example.com/callback"):
             validate_document(url, doc)
 
-    def test_localhost_name_refused_in_document(self) -> None:
+    def test_localhost_name_admitted_in_document(self) -> None:
+        url = "https://claude.ai/oauth/claude-code-client-metadata"
+        doc = {
+            "client_id": url,
+            "redirect_uris": ["http://localhost/callback", "http://127.0.0.1/callback"],
+        }
+        result = validate_document(url, doc)
+        assert result.redirect_uris == ("http://localhost/callback", "http://127.0.0.1/callback")
+
+    def test_failing_entry_dropped_not_document(self) -> None:
         url = "https://claude.ai/mcp"
         doc = {
             "client_id": url,
-            "redirect_uris": ["http://localhost:51580/callback"],
+            "redirect_uris": ["http://example.com/cb", "https://app.example/cb"],
         }
-        with pytest.raises(DocumentInvalid):
+        result = validate_document(url, doc)
+        assert result.redirect_uris == ("https://app.example/cb",)
+
+    def test_all_entries_failing_names_every_one(self) -> None:
+        url = "https://claude.ai/mcp"
+        doc = {
+            "client_id": url,
+            "redirect_uris": ["http://example.com/cb", "http://foo.localhost/cb"],
+        }
+        with pytest.raises(DocumentInvalid) as excinfo:
             validate_document(url, doc)
+        message = str(excinfo.value)
+        assert "http://example.com/cb" in message
+        assert "http://foo.localhost/cb" in message
