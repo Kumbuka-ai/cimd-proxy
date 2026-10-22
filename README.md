@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Johannes Bayer-Albert
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # cimd-proxy
 
 ![License](https://img.shields.io/badge/license-Apache_2.0-FF5B1F?style=flat-square)
@@ -147,7 +152,7 @@ checked `state` and `iss` -- and uses the access token of that sign-in for one
 management call, in memory only.
 
 ```bash
-pipx install "git+https://github.com/Kumbuka-ai/cimd-proxy@v0.6.0"   # or: uvx --from … pat-create
+pipx install "git+https://github.com/Kumbuka-ai/cimd-proxy@v0.6.1"   # or: uvx --from … pat-create
 pat-create --resource https://mcp.example.com/mcp --name nightly-agent > nightly.pat
 pat-create --resource https://mcp.example.com/mcp --name reader --set agent-read --expires-in-days 30
 pat-list   --resource https://mcp.example.com/mcp
@@ -198,7 +203,7 @@ permission set — and how keys are rotated is in `deploy/README.md`.
 ```bash
 cp deploy/.env.example deploy.env
 # edit deploy.env — public URL, a fresh secret key, your upstream, your resources
-docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.6.0
+docker run --rm --env-file deploy.env -p 8080:8080 ghcr.io/kumbuka-ai/cimd-proxy:v0.6.1
 curl -s http://127.0.0.1:8080/.well-known/oauth-authorization-server
 ```
 

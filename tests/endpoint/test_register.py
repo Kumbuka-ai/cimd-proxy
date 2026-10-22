@@ -101,12 +101,22 @@ class TestRegisterRefusals:
         assert payload["error"] == "invalid_redirect_uri"
         assert "https" in payload["error_description"]
 
-    def test_localhost_name_refused(self, client: TestClient) -> None:
-        # RFC 8252 §8.3 recommends the IP literal explicitly because the name
-        # 'localhost' is DNS-resolvable and can be redirected via /etc/hosts.
-        r = client.post("/register", json={"redirect_uris": ["http://localhost:51580/callback"]})
+    def test_localhost_subdomain_refused(self, client: TestClient) -> None:
+        # The name localhost is a loopback host; a subdomain of it is not.
+        r = client.post("/register", json={"redirect_uris": ["http://foo.localhost:51580/cb"]})
         assert r.status_code == 400
         assert r.json()["error"] == "invalid_redirect_uri"
+
+    def test_one_failing_entry_refuses_registration(self, client: TestClient) -> None:
+        # Unlike a CIMD document, a registration is not shortened: the client
+        # is registering now and gets a clear refusal naming the entry.
+        r = client.post(
+            "/register",
+            json={"redirect_uris": ["https://app.example/cb", "http://example.com/cb"]},
+        )
+        assert r.status_code == 400
+        assert r.json()["error"] == "invalid_redirect_uri"
+        assert "http://example.com/cb" in r.json()["error_description"]
 
     def test_fragment_refused(self, client: TestClient) -> None:
         r = client.post("/register", json={"redirect_uris": ["https://example.com/cb#frag"]})

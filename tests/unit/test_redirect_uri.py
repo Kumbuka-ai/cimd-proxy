@@ -24,6 +24,11 @@ class TestAcceptRegistered:
             "http://127.0.0.1:43127/callback",
             "http://127.0.0.1/callback",
             "http://[::1]:51580/callback",
+            # localhost as a loopback name — the MCP authorization spec admits
+            # it, and command-line clients list it (the Claude Code CLI does).
+            "http://localhost/callback",
+            "http://localhost:51580/callback",
+            "http://LOCALHOST:51580/callback",  # host names are case-insensitive
         ],
     )
     def test_admits(self, uri: str) -> None:
@@ -34,7 +39,10 @@ class TestAcceptRegistered:
         [
             "http://evil.example/callback",
             "http://example.com/cb",
-            "http://localhost:51580/callback",
+            "http://foo.localhost/cb",  # a subdomain is not the loopback name
+            "http://localhost.example/cb",  # neither is a name that starts with it
+            "http://localhost./cb",  # the root-anchored form is a different name
+            "http://notlocalhost/cb",
             "http://127.0.0.2:51580/callback",  # loopback net but not the pinned literal
             "https://example.com/cb#frag",
             "https://user:pw@example.com/cb",
@@ -65,6 +73,23 @@ class TestUriMatchesRegistration:
     def test_loopback_ipv6_port_agnostic(self) -> None:
         assert uri_matches_registration(
             "http://[::1]:43127/callback", "http://[::1]:51580/callback"
+        )
+
+    def test_localhost_port_agnostic(self) -> None:
+        assert uri_matches_registration(
+            "http://localhost:56896/callback", "http://localhost/callback"
+        )
+
+    def test_localhost_does_not_match_ip_literal(self) -> None:
+        # The name and the literal are different hosts, as 127.0.0.1 and
+        # [::1] are; a client that wants both lists both.
+        assert not uri_matches_registration(
+            "http://localhost:56896/callback", "http://127.0.0.1/callback"
+        )
+
+    def test_localhost_subdomain_not_port_agnostic(self) -> None:
+        assert not uri_matches_registration(
+            "http://foo.localhost:56896/cb", "http://foo.localhost/cb"
         )
 
     def test_loopback_family_must_match(self) -> None:

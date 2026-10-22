@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Johannes Bayer-Albert
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Deploying cimd-proxy
 
 The reference shape for a compose-based deployment behind an existing reverse
@@ -50,9 +55,11 @@ Work outward, one layer at a time, and stop at the first surprise.
    register dynamically.
 3. **The authorization step** — connect a real client. A refusal here is typed
    and names its reason in the proxy log; the common ones are a `resource`
-   value absent from the table and a `redirect_uri` that violates the
-   RFC 8252 §7.3 shape (http on a non-loopback host, or the `localhost` name
-   rather than the `127.0.0.1` / `[::1]` literal).
+   value absent from the table and a `redirect_uri` that is not usable —
+   http on a host other than `127.0.0.1`, `[::1]` or `localhost`. A client
+   document entry of that shape is dropped, not the document; the request for
+   it is refused, and a document with no usable entry is refused naming every
+   dropped one.
 4. **The token step** — a successful connection is not proof that the audience
    is right. Call the resource once; a token with the wrong audience is
    rejected there, not at the proxy.
