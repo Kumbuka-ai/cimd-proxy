@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+# SPDX-FileCopyrightText: 2026 Johannes Bayer-Albert
+# SPDX-License-Identifier: Apache-2.0
 #
 # cimd-proxy-migrations: the official Flyway image plus this repository's
 # migrations. Built from the same tag as the proxy image (release.yml), so the
@@ -11,6 +13,13 @@
 # The base is pinned by the digest of its multi-arch index, so amd64 and arm64
 # get the same Flyway and a re-tag upstream changes nothing here.
 FROM flyway/flyway:13.9.0-alpine@sha256:ae8e985a8caf73181a39aad823690f27d55c850d4c5cea92a94c0ce4b3943156
+
+# Patch the base image's OS packages before anything else lands. The digest pin
+# freezes Flyway, and with it an Alpine userland whose fixes keep being
+# published after the pin (libexpat 2.8.5 carried a HIGH that 2.9.0 fixes).
+# Upgrading here closes that gap at build time without moving the pin; the proxy
+# image does the same with apt.
+RUN apk upgrade --no-cache
 
 # Keep PostgreSQL support and nothing else. The official image ships the JDBC
 # drivers and Flyway modules of some thirty databases, and those carry the
