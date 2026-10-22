@@ -169,21 +169,39 @@ def validate_document(url: str, document: dict[str, Any]) -> CimdDocument:
         raise DocumentInvalid("CIMD document must carry a non-empty redirect_uris array")
     if not all(isinstance(u, str) and u for u in redirect_uris):
         raise DocumentInvalid("every redirect_uris entry must be a non-empty string")
-    # RFC 8252 §7.3 / §8.3 — same policy as the DCR registration path. A CIMD
-    # document that lists a http URI on a non-loopback host is refused here so
-    # a document that cannot be used at /authorize step 4 is not silently
-    # cached.
+    return CimdDocument(
+        client_id=client_id,
+        redirect_uris=_usable_redirect_uris(redirect_uris),
+        raw=document,
+        cache_control=None,
+    )
+
+
+def _usable_redirect_uris(redirect_uris: list[str]) -> tuple[str, ...]:
+    """Keep the entries that pass the redirect_uri policy; drop the rest.
+
+    Same policy as the DCR registration path (:mod:`redirect_uri`), applied
+    per entry: a document is published by its client for every platform it
+    runs on, and one entry the proxy cannot use must not lock the client out
+    of the entries it can. A dropped entry never reaches ``/authorize`` step
+    4, so a request for it is refused there. A document with no usable entry
+    is refused, naming every dropped one, so it is not silently cached.
+    """
+
+    kept: list[str] = []
+    dropped: list[str] = []
     for uri in redirect_uris:
         try:
             accept_registered(uri)
         except RedirectUriRefused as exc:
-            raise DocumentInvalid(str(exc)) from exc
-    return CimdDocument(
-        client_id=client_id,
-        redirect_uris=tuple(redirect_uris),
-        raw=document,
-        cache_control=None,
-    )
+            dropped.append(str(exc))
+        else:
+            kept.append(uri)
+    if not kept:
+        raise DocumentInvalid(
+            "CIMD document lists no usable redirect_uris entry: " + "; ".join(dropped)
+        )
+    return tuple(kept)
 
 
 class CimdFetcher:

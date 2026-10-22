@@ -195,11 +195,14 @@ def _validate(payload: dict[str, Any]) -> tuple[tuple[str, ...], str, str]:
 
 
 def _reject_disallowed_redirect(uri: str) -> None:
-    """Refuse a redirect_uri that fails the RFC 8252 §7.3 policy.
+    """Refuse a redirect_uri that fails the redirect_uri policy.
 
     The shared rule lives in :mod:`redirect_uri`; this wrapper turns the
     ``RedirectUriRefused`` message into an RFC 7591 ``invalid_redirect_uri``
-    JSON error.
+    JSON error. Unlike a CIMD document, a registration is refused whole on
+    one failing entry: the client is registering right now and can correct
+    the request, so a clear refusal serves it better than a registration
+    silently shorter than the one it asked for.
     """
 
     try:

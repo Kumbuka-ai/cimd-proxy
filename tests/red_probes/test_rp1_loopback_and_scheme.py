@@ -269,9 +269,7 @@ _LOOSENED = [
 
 
 class TestRP1LocalhostExactName:
-    @pytest.mark.parametrize(
-        "uri", ["http://foo.localhost/cb", "http://localhost.example/cb"]
-    )
+    @pytest.mark.parametrize("uri", ["http://foo.localhost/cb", "http://localhost.example/cb"])
     def test_guarded_rejects(self, client: TestClient, uri: str) -> None:
         r = client.post("/register", json={"redirect_uris": [uri]})
         assert r.status_code == 400

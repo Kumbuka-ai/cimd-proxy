@@ -17,15 +17,17 @@ Validation order matters. Every step decides whether the next is meaningful:
 1. ``resource`` known (or covered by ``DEFAULT_RESOURCE``).
 2. ``code_challenge_method`` == ``S256``.
 3. CIMD route: the CIMD document is fetched and validated (identity, no
-   secret, no shared-secret auth method, non-empty ``redirect_uris``, and
-   the RFC 8252 §7.3 shape check on every listed URI). DCR route: the
+   secret, no shared-secret auth method, non-empty ``redirect_uris``). Each
+   listed URI then passes the redirect_uri shape check or is dropped; the
+   document is refused only when no entry is left. DCR route: the
    envelope is opened and its sealed ``redirect_uris`` list is read. There
    is no host allowlist — the fetcher's SSRF guard is what stops a CIMD
    URL from being turned into an internal probe, and the DCR envelope is
    only issuable through the /register gate.
 4. ``redirect_uri`` matches an entry in the ``redirect_uris`` list the
-   route produced. The comparison is byte-equal (RFC 3986 §6.2.1) except
-   when both URIs are loopback ``http`` URIs, where the port is ignored
+   route produced — for CIMD, the entries that survived step 3. The
+   comparison is byte-equal (RFC 3986 §6.2.1) except when both URIs are
+   loopback ``http`` URIs on the same host, where the port is ignored
    (RFC 8252 §8.3).
 
 Before step 4 has passed, an error must not redirect (OAuth 2.1 §4.1.2.1 —

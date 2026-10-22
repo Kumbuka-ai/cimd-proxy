@@ -6,20 +6,24 @@
 Two rules live here, and only these two:
 
 * :func:`accept_registered` decides whether a ``redirect_uri`` is a valid
-  registration. ``https`` is required for every host except the IP loopback
-  literals ``127.0.0.1`` and ``::1`` (RFC 8252 §7.3), where ``http`` is
-  explicitly permitted because the connection never leaves the device and a
-  loopback interface cannot carry a publicly verifiable certificate. The name
-  ``localhost`` is refused because it is DNS-resolvable and RFC 8252 §8.3
-  recommends the IP literal instead. No fragment, non-empty host, no
-  userinfo.
+  registration. ``https`` is required for every host except the loopback
+  hosts, where ``http`` is permitted because the connection never leaves the
+  device and a loopback interface cannot carry a publicly verifiable
+  certificate. The loopback hosts are the IP literals ``127.0.0.1`` and
+  ``::1`` (RFC 8252 §7.3) and the name ``localhost`` — exactly that name,
+  no subdomain of it and no name that merely contains it. The MCP
+  authorization specification admits localhost URLs, and command-line
+  clients publish them; RFC 8252 §8.3 calls the name NOT RECOMMENDED, not
+  forbidden. The residual risk — ``localhost`` bent elsewhere by DNS or a
+  hosts file — lies on the client's device and is the client's to carry,
+  not the proxy's. No fragment, non-empty host, no userinfo.
 
 * :func:`uri_matches_registration` is the equality used at ``/authorize``
   step 4. RFC 3986 §6.2.1 byte comparison is the default; RFC 8252 §8.3
-  drops port equality when BOTH URIs are loopback ``http`` URIs, because the
-  client picks the port at run time. Nothing else is normalised — case,
-  percent-encoding, dot segments and trailing slashes are left alone on
-  purpose.
+  drops port equality when BOTH URIs are loopback ``http`` URIs on the same
+  host, because the client picks the port at run time. Nothing else is
+  normalised — case, percent-encoding, dot segments and trailing slashes are
+  left alone on purpose.
 
 The rule is the same on both entry paths (DCR and CIMD).
 """
@@ -29,6 +33,7 @@ from __future__ import annotations
 from urllib.parse import SplitResult, urlsplit
 
 _LOOPBACK_LITERALS = frozenset({"127.0.0.1", "::1"})
+_LOOPBACK_NAME = "localhost"
 
 
 class RedirectUriRefused(Exception):
@@ -52,12 +57,12 @@ def accept_registered(uri: str) -> None:
     if split.scheme == "https":
         return
     if split.scheme == "http":
-        if split.hostname in _LOOPBACK_LITERALS:
+        if _is_loopback_host(split.hostname):
             return
         raise RedirectUriRefused(
             f"redirect_uri {uri!r} must use https "
-            "(http is permitted only for the loopback IP literals "
-            "127.0.0.1 or [::1] per RFC 8252 §7.3)"
+            "(http is permitted only for the loopback hosts "
+            "127.0.0.1, [::1] and localhost)"
         )
     raise RedirectUriRefused(f"redirect_uri {uri!r} must use https or a loopback http scheme")
 
@@ -84,4 +89,10 @@ def uri_matches_registration(requested: str, registered: str) -> bool:
 
 
 def _is_loopback_http(split: SplitResult) -> bool:
-    return split.scheme == "http" and split.hostname in _LOOPBACK_LITERALS
+    return split.scheme == "http" and _is_loopback_host(split.hostname)
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    # Equality, never a suffix or substring test: foo.localhost and
+    # localhost.example are ordinary names. urlsplit has lower-cased the host.
+    return hostname in _LOOPBACK_LITERALS or hostname == _LOOPBACK_NAME

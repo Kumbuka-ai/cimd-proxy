@@ -60,9 +60,7 @@ class TestRP10EntryGranularity:
         r = client.get("/authorize", params=_params(), follow_redirects=False)
         assert r.status_code == 302, r.text
 
-    def test_bypass_rejects(
-        self, client: TestClient, app, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_bypass_rejects(self, client: TestClient, app, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(_fetcher_mod, "_usable_redirect_uris", _all_or_nothing)
         install_fake_fetcher(app, valid_document(_CLIENT_ID, _DROPPED, _KEPT))
         r = client.get("/authorize", params=_params(), follow_redirects=False)
