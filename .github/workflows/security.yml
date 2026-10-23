@@ -1,3 +1,8 @@
+# Copyright (c) 2026 JBAConsult - Architekturberatung Johannes Bayer-Albert
+# All rights reserved. Copying, reproduction, distribution or any other
+# use of this file, in whole or in part, without the prior written
+# permission of the copyright holder is prohibited.
+
 # The security gates: Semgrep OSS, Trivy and Gitleaks.
 #
 # The definition lives once, in Kumbuka-ai/workflows, and this file calls it.
@@ -38,6 +43,9 @@ permissions:
 jobs:
   security:
     uses: Kumbuka-ai/workflows/.github/workflows/reusable-security.yml@main
+    with:
+      # Own branches run on apollo, fork pull requests on a hosted runner.
+      runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'apollo' || 'ubuntu-latest' }}
 
   security-images:
     uses: Kumbuka-ai/workflows/.github/workflows/reusable-security-image.yml@main
@@ -49,6 +57,8 @@ jobs:
       contents: read
       packages: read
     with:
+      # Own branches run on apollo, fork pull requests on a hosted runner.
+      runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'apollo' || 'ubuntu-latest' }}
       image-targets: >-
         [{"name": "cimd-proxy", "context": ".", "file": "Dockerfile"},
          {"name": "cimd-proxy-migrations", "context": ".", "file": "Dockerfile.migrations"}]

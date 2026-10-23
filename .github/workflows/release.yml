@@ -1,3 +1,8 @@
+# Copyright (c) 2026 JBAConsult - Architekturberatung Johannes Bayer-Albert
+# All rights reserved. Copying, reproduction, distribution or any other
+# use of this file, in whole or in part, without the prior written
+# permission of the copyright holder is prohibited.
+
 name: release
 
 on:
@@ -7,7 +12,7 @@ on:
 
 jobs:
   image:
-    runs-on: ubuntu-latest
+    runs-on: apollo
     permissions:
       contents: read
       packages: write
